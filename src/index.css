@@ -1,0 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Noto Sans Thai', system-ui, sans-serif;
+  --color-brand-50: #eefaf8;
+  --color-brand-100: #d3f2ee;
+  --color-brand-600: #0f8f86;
+  --color-brand-700: #0b726b;
+  --color-brand-900: #0d3b38;
+}
+
+@layer base {
+  body { font-size: 16px; background: #f5f8f8; color: #1b2b2a; }
+  button { cursor: pointer; }
+}

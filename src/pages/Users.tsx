@@ -1,0 +1,120 @@
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { FunctionsHttpError } from '@supabase/supabase-js'
+import { supabase } from '../supabase'
+import { Badge, Btn, Card, Field, H, Modal, Table, inputCls } from '../ui'
+
+const ROLES: [string, string][] = [['admin', 'Admin'], ['doctor', 'แพทย์'], ['caregiver', 'ญาติ/ผู้ดูแล'], ['patient', 'ผู้ป่วย']]
+const RANK = ROLES.map(([k]) => k) // highest first, a user with several roles shows the first
+type U = { id: string; full_name: string | null; phone: string | null; is_active: boolean; role: string }
+type Row = { id: number; at: string; actor: string | null; action: string; table_name: string | null; row_id: string | null }
+
+export function Users() {
+  const [me, setMe] = useState('')
+  const [users, setUsers] = useState<U[]>([])
+  const [audit, setAudit] = useState<Row[]>([])
+  const [msg, setMsg] = useState('')
+  const [form, setForm] = useState(false)
+  const [f, setF] = useState({ username: '', full_name: '', pin: '', role: 'doctor' })
+  const [formErr, setFormErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    const [p, r, a] = await Promise.all([
+      supabase.from('profiles').select('id, full_name, phone, is_active').order('user_no'),
+      supabase.from('user_roles').select('user_id, role'),
+      supabase.from('audit_logs').select('id, at, actor, action, table_name, row_id').order('at', { ascending: false }).limit(20),
+    ])
+    const bad = p.error ?? r.error ?? a.error
+    if (bad) return setMsg('โหลดข้อมูลไม่สำเร็จ: ' + bad.message)
+    const roleOf = (id: string) => RANK.find((k) => (r.data ?? []).some((x) => x.user_id === id && x.role === k)) ?? 'none'
+    setUsers((p.data ?? []).map((u) => ({ ...u, role: roleOf(u.id) })))
+    setAudit(a.data ?? [])
+  }, [])
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setMe(data.session?.user.id ?? ''))
+    load()
+  }, [load])
+
+  const log = (action: string, row_id: string, old_value: object, new_value: object) =>
+    supabase.from('audit_logs').insert({ actor: me, action, table_name: 'profiles/user_roles', row_id, old_value, new_value })
+
+  // Add the new role first, then drop the others: the user is never left without a role.
+  const setRole = async (u: U, role: string) => {
+    const ins = await supabase.from('user_roles').upsert({ user_id: u.id, role }, { onConflict: 'user_id,role', ignoreDuplicates: true })
+    if (ins.error) return setMsg('เปลี่ยนสิทธิ์ไม่สำเร็จ: ' + ins.error.message)
+    if (role === 'doctor') {
+      const { data } = await supabase.from('doctors').select('id').eq('user_id', u.id).maybeSingle()
+      if (!data) await supabase.from('doctors').insert({ user_id: u.id, full_name: u.full_name ?? u.phone ?? '-' })
+    }
+    const del = await supabase.from('user_roles').delete().eq('user_id', u.id).neq('role', role)
+    if (del.error) return setMsg('ลบสิทธิ์เดิมไม่สำเร็จ: ' + del.error.message)
+    await log('change_role', u.id, { role: u.role }, { role })
+    setMsg('บันทึกสิทธิ์แล้ว')
+    load()
+  }
+
+  const toggle = async (u: U) => {
+    const { error } = await supabase.from('profiles').update({ is_active: !u.is_active }).eq('id', u.id)
+    if (error) return setMsg('เปลี่ยนสถานะไม่สำเร็จ: ' + error.message)
+    await log('set_active', u.id, { is_active: u.is_active }, { is_active: !u.is_active })
+    load()
+  }
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setFormErr('')
+    const { error } = await supabase.functions.invoke('create-user', { body: f })
+    setBusy(false)
+    if (error) {
+      const body = error instanceof FunctionsHttpError ? await error.context.json().catch(() => null) : null
+      return setFormErr(body?.error ?? error.message)
+    }
+    setForm(false)
+    setF({ username: '', full_name: '', pin: '', role: 'doctor' })
+    setMsg('สร้างบัญชีแล้ว')
+    load()
+  }
+
+  const nameOf = (id: string | null) => users.find((u) => u.id === id)?.full_name ?? '-'
+  return (
+    <>
+      {msg && <div role="status" className="rounded-xl bg-brand-50 p-3 text-brand-900 ring-1 ring-brand-100">{msg}</div>}
+      <Card>
+        <H action={<Btn onClick={() => setForm(true)}>เพิ่มผู้ใช้</Btn>}>บัญชีผู้ใช้งาน</H>
+        <Table
+          head={['ชื่อ', 'ชื่อผู้ใช้ / เบอร์', 'สิทธิ์', 'สถานะ', '']}
+          rows={users.map((u) => [
+            <b>{u.full_name ?? '-'}</b>, u.phone ?? '-',
+            <select className={inputCls + ' !w-auto'} disabled={u.id === me} value={u.role} onChange={(e) => setRole(u, e.target.value)}>
+              {u.role === 'none' && <option value="none" disabled>ไม่มีสิทธิ์</option>}
+              {ROLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>,
+            <Badge tone={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</Badge>,
+            u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : <Btn kind="ghost" onClick={() => toggle(u)}>{u.is_active ? 'ปิดบัญชี' : 'เปิดบัญชี'}</Btn>,
+          ])}
+        />
+      </Card>
+      <Card>
+        <H>Audit Log</H>
+        <Table head={['เวลา', 'ผู้ดำเนินการ', 'การกระทำ', 'รายการ']} rows={audit.map((a) => [new Date(a.at).toLocaleString('th-TH'), nameOf(a.actor), a.action, `${a.table_name ?? ''} ${a.row_id ?? ''}`])} />
+      </Card>
+      {form && (
+        <Modal title="เพิ่มผู้ใช้" onClose={() => setForm(false)}>
+          <form onSubmit={create} className="space-y-4">
+            <Field label="ชื่อ-นามสกุล"><input className={inputCls} value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
+            <Field label="ชื่อผู้ใช้หรือเบอร์โทร (ใช้ login)"><input className={inputCls} maxLength={30} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value.replace(/\W/g, '') })} /></Field>
+            <Field label="PIN 6 หลัก"><input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} /></Field>
+            <Field label="สิทธิ์">
+              <select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{ROLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+            </Field>
+            {formErr && <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{formErr}</div>}
+            <div className="flex justify-end"><Btn>{busy ? 'กำลังสร้าง...' : 'สร้างบัญชี'}</Btn></div>
+          </form>
+        </Modal>
+      )}
+    </>
+  )
+}
