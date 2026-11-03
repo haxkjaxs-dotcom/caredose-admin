@@ -21,10 +21,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     env:
-      # Public client values, set under Settings > Secrets and variables > Actions > Variables.
+      # Public client values (already visible in the built site). A repository variable of the same name overrides them.
       # Never put a service_role / secret key here: this site is public.
-      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || 'https://eokqjjodfgdpgzievgln.supabase.co' }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_I2y5wnjrQLolW7GAv_zbmQ_MvPxF-nJ' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
