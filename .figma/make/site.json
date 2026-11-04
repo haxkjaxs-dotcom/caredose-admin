@@ -1,8 +1,8 @@
 {
-  "title": "ยาอุ่นใจ CareDose",
+  "title": "ยาอุ่นใจ CareDose Admin",
   "description": "ระบบหลังบ้านสำหรับแพทย์และผู้ดูแลระบบ ยาอุ่นใจ CareDose",
   "icons": {
-    "icon": "/favicon.png"
+    "icon": "/caredose-icon.png"
   },
   "robots": {
     "index": false
