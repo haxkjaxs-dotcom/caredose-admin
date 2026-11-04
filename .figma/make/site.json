@@ -1,5 +1,9 @@
 {
-  "description": "Helps users explore and manage attached content with a clear, convenient interface.",
+  "title": "ยาอุ่นใจ CareDose",
+  "description": "ระบบหลังบ้านสำหรับแพทย์และผู้ดูแลระบบ ยาอุ่นใจ CareDose",
+  "icons": {
+    "icon": "/favicon.png"
+  },
   "robots": {
     "index": false
   },
