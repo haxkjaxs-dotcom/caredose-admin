@@ -1,7 +1,7 @@
 import * as D from './data'
 import type { Plan, Appt } from './data'
 
-export type Role = 'Admin' | 'Doctor'
+export type Role = 'Admin' | 'Doctor' | 'Caregiver'
 export type FollowUp = { id: string; patient: string; note: string; at: string; by: string }
 
 export type Ctx = {

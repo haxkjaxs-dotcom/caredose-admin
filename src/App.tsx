@@ -14,6 +14,7 @@ import { Doctors } from './pages/Doctors'
 import { Carers } from './pages/Carers'
 import { Users } from './pages/Users'
 import { Login } from './pages/Login'
+import { defaultPageFor, navIdsFor, roleFromRoles } from './lib/roles'
 
 type Nav = { id: string; label: string; admin?: boolean }
 const NAV: Nav[] = [
@@ -51,7 +52,7 @@ export default function App() {
     ]).then(([roles, prof]) => {
       const r = (roles.data ?? []).map((x) => x.role)
       // a disabled account is signed in but gets no access
-      setRole(!prof.data?.is_active ? 'none' : r.includes('admin') ? 'Admin' : r.includes('doctor') ? 'Doctor' : 'none')
+      setRole(roleFromRoles(r, !!prof.data?.is_active))
     })
   }, [uid])
 
@@ -60,7 +61,7 @@ export default function App() {
   if (role === 'none' || !role) {
     return (
       <Centered>
-        <p>บัญชีนี้ไม่มีสิทธิ์เข้าหลังบ้าน (ต้องเป็น Admin หรือแพทย์)</p>
+        <p>บัญชีนี้ไม่มีสิทธิ์เข้าหลังบ้าน (ต้องเป็น Admin แพทย์ หรือญาติผู้ดูแล)</p>
         <button className="min-h-11 rounded-xl border border-slate-300 px-4" onClick={signOut}>ออกจากระบบ</button>
       </Centered>
     )
@@ -69,7 +70,7 @@ export default function App() {
 }
 
 function Shell({ role }: { role: Role }) {
-  const [page, setPage] = useState('dash')
+  const [page, setPage] = useState(defaultPageFor(role))
   const [detail, setDetail] = useState<string | null>(null)
   const [detailReturn, setDetailReturn] = useState('patients')
   const [open, setOpen] = useState(false)
@@ -82,7 +83,10 @@ function Shell({ role }: { role: Role }) {
   const myPatients = useMemo(() => (role === 'Admin' ? D.patients : D.patients.filter((p) => p.doctor === me)), [role])
   const ids = new Set(myPatients.map((p) => p.id))
   const go = (p: string) => { setPage(p); setDetail(null); setOpen(false) }
-  const nav = NAV.filter((n) => !n.admin || role === 'Admin')
+  const allowed = navIdsFor(role, NAV)
+  const nav = NAV.filter((n) => allowed.includes(n.id))
+  const cur = allowed.includes(page) ? page : defaultPageFor(role) // a page outside the role's menu is never rendered
+  const roleLabel = role === 'Admin' ? 'ผู้ดูแลระบบ' : role === 'Caregiver' ? 'ญาติผู้ดูแล (ดูอย่างเดียว)' : 'แพทย์'
   const ctx = {
     patients: myPatients, ids, plans, setPlans, appts: appts.filter((a) => ids.has(a.patient)),
     setAppts: (next: Appt[]) => setAppts([...appts.filter((a) => !ids.has(a.patient)), ...next]),
@@ -100,13 +104,13 @@ function Shell({ role }: { role: Role }) {
         </div>
         <nav className="space-y-1">
           {nav.map((n) => (
-            <button key={n.id} onClick={() => go(n.id)} className={`flex min-h-11 w-full items-center rounded-xl px-4 text-left text-base ${page === n.id ? 'bg-white/15 font-semibold' : 'text-brand-100 hover:bg-white/10'}`}>
+            <button key={n.id} onClick={() => go(n.id)} className={`flex min-h-11 w-full items-center rounded-xl px-4 text-left text-base ${cur === n.id ? 'bg-white/15 font-semibold' : 'text-brand-100 hover:bg-white/10'}`}>
               {n.label}
             </button>
           ))}
         </nav>
         <div className="absolute inset-x-5 bottom-5 rounded-xl bg-white/10 p-3 text-sm">
-          <div className="mb-2 text-brand-100">{role === 'Admin' ? 'ผู้ดูแลระบบ' : 'แพทย์'}</div>
+          <div className="mb-2 text-brand-100">{roleLabel}</div>
           <button onClick={signOut} className="min-h-11 w-full rounded-lg bg-white px-2 py-2 text-brand-900">ออกจากระบบ</button>
         </div>
       </aside>
@@ -114,19 +118,19 @@ function Shell({ role }: { role: Role }) {
       <main className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:px-8">
           <button className="min-h-11 rounded-xl border border-slate-300 px-4 lg:hidden" onClick={() => setOpen(true)}>เมนู</button>
-          <h1 className="text-xl font-bold">{nav.find((n) => n.id === page)?.label}</h1>
-          <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700">{role === 'Admin' ? 'ผู้ดูแลระบบ' : 'นพ.สมชาย วงศ์สกุล'}</span>
+          <h1 className="text-xl font-bold">{nav.find((n) => n.id === cur)?.label}</h1>
+          <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700">{role === 'Doctor' ? 'นพ.สมชาย วงศ์สกุล' : roleLabel}</span>
         </header>
         <div className="space-y-6 p-4 lg:p-8">
-          {page === 'dash' && <Dashboard {...ctx} />}
-          {page === 'patients' && (detail ? <PatientDetail id={detail} {...ctx} back={() => go(detailReturn)} /> : <Patients {...ctx} />)}
-          {page === 'plans' && <Plans {...ctx} />}
-          {page === 'logs' && <Logs {...ctx} />}
-          {page === 'appts' && <Appts {...ctx} />}
-          {page === 'meds' && <Meds {...ctx} />}
-          {page === 'doctors' && <Doctors {...ctx} />}
-          {page === 'carers' && <Carers {...ctx} />}
-          {page === 'users' && <Users />}
+          {cur === 'dash' && <Dashboard {...ctx} />}
+          {cur === 'patients' && (detail ? <PatientDetail id={detail} {...ctx} back={() => go(detailReturn)} /> : <Patients {...ctx} />)}
+          {cur === 'plans' && <Plans {...ctx} />}
+          {cur === 'logs' && <Logs {...ctx} />}
+          {cur === 'appts' && <Appts {...ctx} />}
+          {cur === 'meds' && <Meds {...ctx} />}
+          {cur === 'doctors' && <Doctors {...ctx} />}
+          {cur === 'carers' && <Carers {...ctx} />}
+          {cur === 'users' && <Users />}
         </div>
       </main>
       {toast && <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-brand-900 px-5 py-3 text-white shadow-lg">{toast}</div>}

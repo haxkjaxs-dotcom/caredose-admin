@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { Badge, Btn, Card, Field, H, Modal, Select, Table, inputCls } from '../ui'
 import { normalizeTimes, planRowToView, planRpcArgs, planToForm, validatePlanForm, type PlanForm as Form, type PlanRow, type PlanView } from '../lib/plans'
 import type { Ctx } from '../ctx'
+import { canEditPlans } from '../lib/roles'
 
 type Patient = { id: string; full_name: string }
 type Med = { id: string; generic_name: string; trade_name: string | null; is_active: boolean }
@@ -25,13 +26,14 @@ export function Plans({ notify, role }: Ctx) {
   const [loadErr, setLoadErr] = useState('')
   const [form, setForm] = useState<Form | null>(null)
   const cur = useRef('') // drops answers that arrive after the user picked another patient
-  const canEdit = role === 'Admin' || role === 'Doctor' // cosmetic: the database decides
+  const canEdit = canEditPlans(role) // cosmetic: the database decides
 
   useEffect(() => {
     supabase.from('patients').select('id, full_name').order('full_name').then(({ data, error }) => {
       if (error) return notify('โหลดรายชื่อผู้ป่วยไม่สำเร็จ: ' + error.message)
       setPatients(data ?? [])
     })
+    if (!canEdit) return // the medicine list is only for the plan form
     supabase.from('medicines').select('id, generic_name, trade_name, is_active').order('generic_name').then(({ data, error }) => {
       if (error) return notify('โหลดคลังยาไม่สำเร็จ: ' + error.message)
       setMeds(data ?? [])

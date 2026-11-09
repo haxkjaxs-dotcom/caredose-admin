@@ -59,7 +59,8 @@ const doctorNames = (p: PatientRow) => p.patient_doctors.filter((x) => x.active)
 const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
 const blank = { full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '' }
 
-export function Patients({ openPatient, notify }: Ctx) {
+export function Patients({ openPatient, notify, role }: Ctx) {
+  const readOnly = role === 'Caregiver' // cosmetic: the database decides; detail page uses mock data so relatives get no "เปิด"
   const [rows, setRows] = useState<PatientRow[]>([])
   const [withPlan, setWithPlan] = useState<Set<string>>(new Set())
   const [q, setQ] = useState('')
@@ -117,7 +118,7 @@ export function Patients({ openPatient, notify }: Ctx) {
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Search v={q} set={setQ} ph="ค้นหาชื่อผู้ป่วย" />
           <Select v={st} set={setSt} all="ทุกสถานะ" opts={[['active', 'มีแผนยา'], ['none', 'ยังไม่มีแผนยา']]} />
-          <div className="sm:ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มผู้ป่วย</Btn></div>
+          {!readOnly && <div className="sm:ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มผู้ป่วย</Btn></div>}
         </div>
         <Table
           head={['ชื่อ-นามสกุล', 'อายุ/เพศ', 'โรคประจำตัว', 'แพ้ยา', 'แพทย์', 'แผนยา', 'เชื่อมแอป', '']}
@@ -126,7 +127,7 @@ export function Patients({ openPatient, notify }: Ctx) {
             p.drug_allergies ? <span className="font-medium text-red-700">{p.drug_allergies}</span> : <span className="text-slate-400">ไม่ระบุ</span>,
             doctorNames(p), <Badge tone={withPlan.has(p.id) ? 'green' : 'gray'}>{withPlan.has(p.id) ? 'มีแผนยา' : 'ไม่มีแผนยา'}</Badge>,
             <div><Badge tone={p.user_id ? 'green' : 'gray'}>{p.user_id ? 'เชื่อมแล้ว' : 'ยังไม่เชื่อม'}</Badge>{dupIds.has(p.id) && <div className="mt-1 text-xs text-amber-700">{DUP_PHONE}</div>}</div>,
-            <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>,
+            readOnly ? '' : <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>,
           ])}
         />
       </Card>
