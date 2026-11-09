@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isHHmm, isThaiMobile, logFilterToQuery, logRowToView, logStatusLabel, normalizeTimes, planRowToView, planToForm, planRpcArgs, validatePlanForm } from './plans'
+import { isHHmm, isThaiMobile, logFilterToQuery, logRowToView, logStatusLabel, normalizePhoneDigits, normalizeTimes, planRowToView, planToForm, planRpcArgs, samePhoneGroups, validatePlanForm } from './plans'
 
 describe('isThaiMobile', () => {
   it('accepts 10 digits starting 06/08/09, ignoring spaces and dashes', () => {
@@ -162,5 +162,26 @@ describe('logFilterToQuery', () => {
     expect(s('late')).toEqual({ status: 'taken', isLate: true })
     expect(s('skipped')).toEqual({ status: 'skipped' })
     expect(s('')).toBeUndefined()
+  })
+})
+
+describe('normalizePhoneDigits', () => {
+  it('matches SQL norm_phone', () => {
+    expect(normalizePhoneDigits('081-234-5678')).toBe('0812345678')
+    expect(normalizePhoneDigits('+66 81-234-5678')).toBe('0812345678')
+    expect(normalizePhoneDigits('66812345678')).toBe('0812345678')
+    expect(normalizePhoneDigits('')).toBe('')
+  })
+})
+
+describe('samePhoneGroups', () => {
+  it('groups equivalent formats', () => {
+    const r = samePhoneGroups([{ id: 'a', phone: '0812345678' }, { id: 'b', phone: '66812345678' }, { id: 'c', phone: '081-234-5678' }])
+    expect([...r].sort()).toEqual(['a', 'b', 'c'])
+  })
+  it('ignores empty, null, distinct and single', () => {
+    expect(samePhoneGroups([{ id: 'a', phone: null }, { id: 'b', phone: '' }, { id: 'c', phone: null }]).size).toBe(0)
+    expect(samePhoneGroups([{ id: 'a', phone: '0812345678' }, { id: 'b', phone: '0898765432' }]).size).toBe(0)
+    expect(samePhoneGroups([{ id: 'a', phone: '0812345678' }]).size).toBe(0)
   })
 })

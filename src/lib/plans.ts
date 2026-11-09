@@ -1,5 +1,18 @@
 export const isThaiMobile = (s: string) => /^0[689]\d{8}$/.test(s.replace(/[\s-]/g, ''))
 
+// Same rule as SQL norm_phone: digits only, leading 66 -> 0.
+export const normalizePhoneDigits = (s: string) => s.replace(/\D/g, '').replace(/^66/, '0')
+
+// ids of patients whose normalised (non-empty) phone is shared with another patient
+export function samePhoneGroups(patients: { id: string; phone: string | null }[]): Set<string> {
+  const byPhone = new Map<string, string[]>()
+  for (const p of patients) {
+    const n = normalizePhoneDigits(p.phone ?? '')
+    if (n) byPhone.set(n, [...(byPhone.get(n) ?? []), p.id])
+  }
+  return new Set([...byPhone.values()].filter((ids) => ids.length > 1).flat())
+}
+
 export const isHHmm = (s: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s)
 
 export const normalizeTimes = (list: string[]) => [...new Set(list.map((t) => t.trim()).filter(Boolean))].sort()

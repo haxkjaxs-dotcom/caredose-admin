@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import type { Tone, Plan } from '../data'
 import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, fmt, inputCls, mName, tones } from '../ui'
 import type { Ctx, FollowUp, Role } from '../ctx'
+import { isThaiMobile, normalizePhoneDigits, samePhoneGroups } from '../lib/plans'
 
 export type DoseStatus = 'ทานแล้ว' | 'เลท' | 'พลาดยา' | 'ยังไม่ได้บันทึก' | 'รอ sync' | 'ยังไม่ถึงกำหนด'
 export type DoseItem = { id: string; date: string; med: string; scheduled: string; recorded: string; status: DoseStatus }
@@ -50,10 +51,12 @@ const buildDoseItems = (patient: string, plans: Plan[], start: Date, end: Date):
 
 type PatientRow = {
   id: string; full_name: string; age: number | null; gender: string | null; conditions: string | null
-  drug_allergies: string | null; phone: string | null; patient_doctors: { active: boolean; doctors: { full_name: string } | null }[]
+  drug_allergies: string | null; phone: string | null; user_id: string | null; nickname: string | null
+  patient_doctors: { active: boolean; doctors: { full_name: string } | null }[]
 }
-const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, phone, patient_doctors(active, doctors(full_name))'
+const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, phone, user_id, nickname, patient_doctors(active, doctors(full_name))'
 const doctorNames = (p: PatientRow) => p.patient_doctors.filter((x) => x.active).map((x) => x.doctors?.full_name).filter(Boolean).join(', ') || '-'
+const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
 const blank = { full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '' }
 
 export function Patients({ openPatient, notify }: Ctx) {
@@ -85,10 +88,11 @@ export function Patients({ openPatient, notify }: Ctx) {
     const age = f.age.trim() === '' ? null : Number(f.age)
     if (!f.full_name.trim()) return setErr('กรุณาระบุชื่อ-นามสกุล')
     if (age !== null && (!Number.isInteger(age) || age < 0 || age > 130)) return setErr('อายุต้องเป็นจำนวนเต็ม 0-130')
+    if (!isThaiMobile(f.phone)) return setErr('กรุณากรอกเบอร์มือถือ 10 หลัก (ใช้เบอร์นี้ให้ผู้ป่วยเข้าแอป)')
     setBusy(true)
     setErr('')
     const { error } = await supabase.rpc('add_patient', {
-      p_full_name: f.full_name, p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: f.phone,
+      p_full_name: f.full_name, p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: normalizePhoneDigits(f.phone),
     })
     setBusy(false)
     if (error) return setErr('บันทึกไม่สำเร็จ: ' + error.message)
@@ -98,6 +102,9 @@ export function Patients({ openPatient, notify }: Ctx) {
     load()
   }
 
+  const dupIds = samePhoneGroups(rows)
+  const typed = normalizePhoneDigits(f.phone)
+  const typedDup = typed !== '' && rows.some((p) => normalizePhoneDigits(p.phone ?? '') === typed)
   const shown = rows.filter((p) => p.full_name.includes(q) && (!st || (st === 'active') === withPlan.has(p.id)))
   return (
     <>
@@ -113,11 +120,12 @@ export function Patients({ openPatient, notify }: Ctx) {
           <div className="sm:ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มผู้ป่วย</Btn></div>
         </div>
         <Table
-          head={['ชื่อ-นามสกุล', 'อายุ/เพศ', 'โรคประจำตัว', 'แพ้ยา', 'แพทย์', 'แผนยา', '']}
+          head={['ชื่อ-นามสกุล', 'อายุ/เพศ', 'โรคประจำตัว', 'แพ้ยา', 'แพทย์', 'แผนยา', 'เชื่อมแอป', '']}
           rows={shown.map((p) => [
             <b>{p.full_name}</b>, `${p.age ?? '-'} / ${p.gender ?? '-'}`, p.conditions ?? '-',
             p.drug_allergies ? <span className="font-medium text-red-700">{p.drug_allergies}</span> : <span className="text-slate-400">ไม่ระบุ</span>,
             doctorNames(p), <Badge tone={withPlan.has(p.id) ? 'green' : 'gray'}>{withPlan.has(p.id) ? 'มีแผนยา' : 'ไม่มีแผนยา'}</Badge>,
+            <div><Badge tone={p.user_id ? 'green' : 'gray'}>{p.user_id ? 'เชื่อมแล้ว' : 'ยังไม่เชื่อม'}</Badge>{dupIds.has(p.id) && <div className="mt-1 text-xs text-amber-700">{DUP_PHONE}</div>}</div>,
             <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>,
           ])}
         />
@@ -133,7 +141,10 @@ export function Patients({ openPatient, notify }: Ctx) {
                   {['หญิง', 'ชาย', 'อื่น ๆ'].map((x) => <option key={x}>{x}</option>)}
                 </select>
               </Field>
-              <Field label="เบอร์โทร"><input className={inputCls} inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+              <Field label="เบอร์โทร *">
+                <input className={inputCls} inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+                {typedDup && <div className="mt-1 text-xs text-amber-700">{DUP_PHONE}</div>}
+              </Field>
             </div>
             <Field label="โรคประจำตัว"><input className={inputCls} value={f.conditions} onChange={(e) => setF({ ...f, conditions: e.target.value })} /></Field>
             <Field label="ประวัติแพ้ยา"><input className={inputCls} value={f.drug_allergies} onChange={(e) => setF({ ...f, drug_allergies: e.target.value })} /></Field>
