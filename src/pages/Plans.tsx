@@ -1,55 +1,149 @@
-import { useState } from 'react'
-import * as D from '../data'
-import { Btn, Card, Field, Modal, Select, Table, inputCls, mName, pName } from '../ui'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { supabase } from '../supabase'
+import { Badge, Btn, Card, Field, H, Modal, Select, Table, inputCls } from '../ui'
+import { normalizeTimes, planRowToView, validatePlanForm, type PlanRow, type PlanView } from '../lib/plans'
 import type { Ctx } from '../ctx'
 
-export function Plans({ patients, plans, setPlans, notify, ids }: Ctx) {
-  const [pid, setPid] = useState(''); const [view, setView] = useState<'day' | 'week'>('day'); const [form, setForm] = useState(false)
-  const list = plans.filter((r) => ids.has(r.patient) && (!pid || r.patient === pid))
-  const [f, setF] = useState({ patient: patients[0]?.id ?? '', med: 'm1', dose: '', qty: '1 เม็ด', time: 'เช้า', start: '2025-06-12', end: '2025-12-31', advice: 'หลังอาหาร', note: '' })
-  const save = () => {
-    if (!f.patient) return notify('ยังไม่มีผู้ป่วยในระบบ')
-    setPlans([...plans, { id: 'r' + Date.now(), patient: f.patient, med: f.med, dose: f.dose || '-', qty: f.qty, times: [f.time], start: f.start, end: f.end, advice: f.advice, note: f.note }])
-    setForm(false); notify('บันทึกแผนยาแล้ว และส่งแจ้งเตือนไปยังผู้ป่วย/ผู้ดูแล')
+type Patient = { id: string; full_name: string }
+type Med = { id: string; generic_name: string; trade_name: string | null; is_active: boolean }
+type Form = { id: string | null; medicineId: string; dose: string; meal: string; start: string; end: string; note: string; times: string[] }
+
+const today = () => new Date().toLocaleDateString('en-CA')
+const blank = (): Form => ({ id: null, medicineId: '', dose: '', meal: '', start: today(), end: '', note: '', times: ['08:00'] })
+const toForm = (v: PlanView): Form => ({ id: v.id, medicineId: v.medicineId, dose: v.dose, meal: v.meal, start: v.start, end: v.end, note: v.note, times: v.times.length ? v.times : [''] })
+
+// every write goes through the save_plan RPC: the database checks permission, the UI only hides buttons
+const savePlan = (patientId: string, f: Form, times: string[], status: 'active' | 'stopped') =>
+  supabase.rpc('save_plan', {
+    p_plan_id: f.id, p_patient_id: patientId, p_medicine_id: f.medicineId, p_dose: f.dose, p_meal_relation: f.meal || null,
+    p_start: f.start, p_end: f.end || null, p_note: f.note || null, p_times: times, p_status: status,
+  })
+
+const ErrBox = ({ children }: { children: string }) => <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{children}</div>
+const Hint = ({ children }: { children: string }) => <p className="py-8 text-center text-slate-400">{children}</p>
+
+export function Plans({ notify, role }: Ctx) {
+  const [patients, setPatients] = useState<Patient[]>([])
+  const [meds, setMeds] = useState<Med[]>([])
+  const [pid, setPid] = useState('')
+  const [plans, setPlans] = useState<PlanView[] | null>(null)
+  const [loadErr, setLoadErr] = useState('')
+  const [form, setForm] = useState<Form | null>(null)
+  const cur = useRef('') // drops answers that arrive after the user picked another patient
+  const canEdit = role === 'Admin' || role === 'Doctor' // cosmetic: the database decides
+
+  useEffect(() => {
+    supabase.from('patients').select('id, full_name').order('full_name').then(({ data, error }) => {
+      if (error) return notify('โหลดรายชื่อผู้ป่วยไม่สำเร็จ: ' + error.message)
+      setPatients(data ?? [])
+    })
+    supabase.from('medicines').select('id, generic_name, trade_name, is_active').order('generic_name').then(({ data, error }) => {
+      if (error) return notify('โหลดคลังยาไม่สำเร็จ: ' + error.message)
+      setMeds(data ?? [])
+    })
+  }, [])
+
+  const load = async (id: string) => {
+    setLoadErr('')
+    const { data, error } = await supabase.from('medication_plans')
+      .select('id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, medicines(generic_name, trade_name), medication_schedules(time_of_day)')
+      .eq('patient_id', id).order('start_date', { ascending: false })
+    if (cur.current !== id) return
+    if (error) return setLoadErr('โหลดแผนยาไม่สำเร็จ: ' + error.message)
+    setPlans((data as unknown as PlanRow[]).map(planRowToView))
   }
-  const slots = ['เช้า', 'กลางวัน', 'เย็น', 'ก่อนนอน']
+  useEffect(() => {
+    cur.current = pid
+    setPlans(null)
+    if (pid) load(pid)
+  }, [pid])
+
+  const stop = async (v: PlanView) => {
+    if (!confirm(`หยุดแผนยา ${v.name}?`)) return
+    const { error } = await savePlan(pid, toForm(v), v.times, 'stopped')
+    if (error) return notify(error.message)
+    notify('หยุดแผนยาแล้ว')
+    load(pid)
+  }
+
   return (
     <>
       <Card>
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row">
-          <Select v={pid} set={setPid} all="ผู้ป่วยทั้งหมด" opts={patients.map((p) => [p.id, p.name])} />
-          <Select v={view} set={(v) => setView((v || 'day') as 'day')} all="ตารางรายวัน" opts={[['week', 'ตารางรายสัปดาห์']]} />
-          <div className="sm:ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มแผนยา</Btn></div>
-        </div>
-        {view === 'day' ? (
-          <Table
-            head={['ผู้ป่วย', 'ยา', 'ขนาด/จำนวน', 'มื้อ', 'ช่วงเวลา', 'คำแนะนำ', 'หมายเหตุแพทย์', '']}
-            rows={list.map((r) => [pName(r.patient), mName(r.med), `${r.dose} × ${r.qty}`, r.times.join(', '), `${r.start} – ${r.end}`, r.advice, r.note || '-',
-              <Btn kind="danger" onClick={() => { setPlans(plans.filter((x) => x.id !== r.id)); notify('ยกเลิกแผนยาแล้ว') }}>ยกเลิก</Btn>])}
-          />
-        ) : (
-          <Table
-            head={['มื้อ', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.']}
-            rows={slots.map((s) => [<b>{s}</b>, ...Array.from({ length: 7 }, () => <span className="text-sm">{list.filter((r) => r.times.includes(s)).map((r) => mName(r.med)).join(', ') || '-'}</span>)])}
-          />
-        )}
+        <H action={canEdit && pid ? <Btn onClick={() => setForm(blank())}>เพิ่มแผนยา</Btn> : undefined}>แผนยา</H>
+        <div className="mb-4"><Select v={pid} set={setPid} all="เลือกผู้ป่วย" opts={patients.map((p) => [p.id, p.full_name])} /></div>
+        {!pid ? <Hint>เลือกผู้ป่วยเพื่อดูแผนยา</Hint>
+          : loadErr ? <ErrBox>{loadErr}</ErrBox>
+          : !plans ? <Hint>กำลังโหลด...</Hint>
+          : (
+            <Table
+              head={['ยา', 'ขนาด', 'มื้อ', 'ช่วงวัน', 'เวลา', 'สถานะ', '']}
+              rows={plans.map((v) => [<b>{v.name}</b>, v.dose, v.meal || '-', v.range, v.times.join(', ') || '-',
+                <Badge tone={v.status === 'active' ? 'green' : 'gray'}>{v.statusLabel}</Badge>,
+                canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => setForm(toForm(v))}>แก้ไข</Btn>{v.status === 'active' && <Btn kind="danger" onClick={() => stop(v)}>หยุดแผน</Btn>}</div> : ''])}
+            />
+          )}
       </Card>
-      {form && (
-        <Modal title="เพิ่มแผนยา" onClose={() => setForm(false)}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="ผู้ป่วย"><select className={inputCls} value={f.patient} onChange={(e) => setF({ ...f, patient: e.target.value })}>{patients.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-            <Field label="ยา"><select className={inputCls} value={f.med} onChange={(e) => setF({ ...f, med: e.target.value })}>{D.medicines.filter((m) => m.active).map((m) => <option key={m.id} value={m.id}>{m.generic}</option>)}</select></Field>
-            <Field label="ขนาดยา"><input className={inputCls} value={f.dose} onChange={(e) => setF({ ...f, dose: e.target.value })} placeholder="เช่น 500 มก." /></Field>
-            <Field label="จำนวนที่ต้องทาน"><input className={inputCls} value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} /></Field>
-            <Field label="มื้อยา"><select className={inputCls} value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })}>{slots.map((s) => <option key={s}>{s}</option>)}</select></Field>
-            <Field label="คำแนะนำ"><select className={inputCls} value={f.advice} onChange={(e) => setF({ ...f, advice: e.target.value })}><option>ก่อนอาหาร</option><option>หลังอาหาร</option></select></Field>
-            <Field label="วันที่เริ่ม"><input type="date" className={inputCls} value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} /></Field>
-            <Field label="วันที่สิ้นสุด"><input type="date" className={inputCls} value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} /></Field>
-          </div>
-          <div className="mt-4"><Field label="หมายเหตุจากแพทย์"><input className={inputCls} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field></div>
-          <div className="mt-6 flex justify-end"><Btn onClick={save}>บันทึก</Btn></div>
-        </Modal>
-      )}
+      {form && <PlanForm init={form} pid={pid} meds={meds} notify={notify} onClose={() => setForm(null)} onSaved={() => { setForm(null); load(pid) }} />}
     </>
+  )
+}
+
+function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; pid: string; meds: Med[]; notify: (m: string) => void; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState(init)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const set = (k: keyof Form) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
+  const setTime = (i: number, v: string) => setF({ ...f, times: f.times.map((t, j) => (j === i ? v : t)) })
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    const times = normalizeTimes(f.times)
+    const bad = validatePlanForm({ medicineId: f.medicineId, dose: f.dose, start: f.start, end: f.end, times })
+    if (bad) return setErr(bad)
+    setBusy(true)
+    setErr('')
+    const { error } = await savePlan(pid, f, times, 'active')
+    setBusy(false)
+    if (error) return setErr(error.message)
+    notify(f.id ? 'แก้ไขแผนยาแล้ว' : 'เพิ่มแผนยาแล้ว')
+    onSaved()
+  }
+
+  return (
+    <Modal title={f.id ? 'แก้ไขแผนยา' : 'เพิ่มแผนยา'} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="ยา *">
+            <select className={inputCls} value={f.medicineId} onChange={set('medicineId')}>
+              <option value="">เลือกยา</option>
+              {meds.filter((m) => m.is_active || m.id === init.medicineId).map((m) => <option key={m.id} value={m.id}>{m.trade_name || m.generic_name}{m.is_active ? '' : ' (ปิดใช้งาน)'}</option>)}
+            </select>
+          </Field>
+          <Field label="ขนาดยา *"><input className={inputCls} value={f.dose} onChange={set('dose')} placeholder="เช่น 1 เม็ด" maxLength={100} /></Field>
+          <Field label="ความสัมพันธ์กับมื้ออาหาร">
+            <input className={inputCls} list="meal-options" value={f.meal} onChange={set('meal')} maxLength={50} />
+            <datalist id="meal-options"><option value="ก่อนอาหาร" /><option value="หลังอาหาร" /><option value="พร้อมอาหาร" /></datalist>
+          </Field>
+          <Field label="วันที่เริ่ม *"><input type="date" className={inputCls} value={f.start} onChange={set('start')} /></Field>
+          <Field label="วันที่สิ้นสุด (ไม่บังคับ)"><input type="date" className={inputCls} value={f.end} onChange={set('end')} /></Field>
+        </div>
+        <Field label="หมายเหตุจากแพทย์"><input className={inputCls} value={f.note} onChange={set('note')} maxLength={500} /></Field>
+        <div>
+          <div className="mb-1 text-sm font-medium text-slate-600">เวลาทานยา *</div>
+          <div className="space-y-2">
+            {f.times.map((t, i) => (
+              <div key={i} className="flex gap-2">
+                <input type="time" aria-label={`เวลาที่ ${i + 1}`} className={inputCls} value={t} onChange={(e) => setTime(i, e.target.value)} />
+                {f.times.length > 1 && <Btn kind="ghost" onClick={() => setF({ ...f, times: f.times.filter((_, j) => j !== i) })}>ลบ</Btn>}
+              </div>
+            ))}
+          </div>
+          <div className="mt-2"><Btn kind="ghost" onClick={() => setF({ ...f, times: [...f.times, ''] })}>เพิ่มเวลา</Btn></div>
+        </div>
+        {err && <ErrBox>{err}</ErrBox>}
+        <div className="flex justify-end"><Btn disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</Btn></div>
+      </form>
+    </Modal>
   )
 }

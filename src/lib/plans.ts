@@ -18,3 +18,23 @@ export function logStatusLabel(status: 'pending' | 'taken' | 'skipped' | 'missed
   if (status === 'skipped') return 'ยังไม่ได้ทาน'
   return 'ยังไม่บันทึก'
 }
+
+export type PlanRow = {
+  id: string; medicine_id: string; dose: string; meal_relation: string | null; start_date: string; end_date: string | null
+  status: string; doctor_note: string | null
+  medicines: { generic_name: string; trade_name: string | null } | null
+  medication_schedules: { time_of_day: string }[] | null
+}
+
+// Postgres `time` comes back as 08:00:00: slice to HH:mm
+export function planRowToView(r: PlanRow) {
+  return {
+    id: r.id, medicineId: r.medicine_id,
+    name: r.medicines?.trade_name || r.medicines?.generic_name || '-',
+    dose: r.dose, meal: r.meal_relation ?? '', start: r.start_date, end: r.end_date ?? '',
+    range: `${r.start_date} – ${r.end_date ?? 'ไม่กำหนดวันสิ้นสุด'}`,
+    times: (r.medication_schedules ?? []).map((s) => s.time_of_day.slice(0, 5)).sort(),
+    note: r.doctor_note ?? '', status: r.status, statusLabel: r.status === 'active' ? 'ใช้งาน' : 'หยุดแล้ว',
+  }
+}
+export type PlanView = ReturnType<typeof planRowToView>

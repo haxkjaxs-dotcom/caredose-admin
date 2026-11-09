@@ -35,10 +35,12 @@ export const H = ({ children, action }: { children: ReactNode; action?: ReactNod
     {action}
   </div>
 )
-export const Btn = ({ children, onClick, kind = 'primary' }: { children: ReactNode; onClick?: () => void; kind?: 'primary' | 'ghost' | 'danger' }) => (
+export const Btn = ({ children, onClick, kind = 'primary', disabled }: { children: ReactNode; onClick?: () => void; kind?: 'primary' | 'ghost' | 'danger'; disabled?: boolean }) => (
   <button
     onClick={onClick}
-    className={`min-h-11 rounded-xl px-4 text-base font-medium transition ${
+    disabled={disabled}
+    type={onClick ? 'button' : 'submit'} // a button with a handler must not submit the surrounding form
+    className={`min-h-11 rounded-xl px-4 text-base font-medium transition disabled:opacity-50 ${
       kind === 'primary' ? 'bg-brand-600 text-white hover:bg-brand-700' : kind === 'danger' ? 'border border-red-300 text-red-700 hover:bg-red-50' : 'border border-slate-300 hover:bg-slate-50'
     }`}
   >
