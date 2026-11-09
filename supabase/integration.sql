@@ -58,7 +58,13 @@ begin
     return pid;
   end if;
 
-  select phone into raw_phone from auth.users where id = uid;
+  -- privileged accounts never claim: claiming activates the profile, which would revive an admin-disabled doctor/caregiver/admin
+  if exists (select 1 from user_roles where user_id = uid and role <> 'patient') then
+    raise exception 'บัญชีนี้ผูกกับผู้ป่วยไม่ได้' using errcode = '42501';
+  end if;
+
+  -- only a phone confirmed by OTP counts
+  select phone into raw_phone from auth.users where id = uid and phone_confirmed_at is not null;
   np := norm_phone(raw_phone);
   if coalesce(np, '') = '' then
     raise exception 'บัญชีนี้ไม่มีเบอร์โทรที่ยืนยันแล้ว' using errcode = '42501';

@@ -14,17 +14,17 @@ begin
   assert norm_phone(null) is null, 'norm: null';
 end $$;
 
-insert into auth.users (id, email, phone) values
-  ('a1000000-0000-0000-0000-000000000001', 'u1@t', '66812345678'),
-  ('a2000000-0000-0000-0000-000000000002', 'u2@t', '66823456789'),
-  ('a3000000-0000-0000-0000-000000000003', 'u3@t', '66834567890'),
-  ('a4000000-0000-0000-0000-000000000004', 'u4@t', '66845678901'),
-  ('a5000000-0000-0000-0000-000000000005', 'u5@t', '66856789012'),
-  ('a6000000-0000-0000-0000-000000000006', 'u6@t', '66867890123'),
-  ('a7000000-0000-0000-0000-000000000007', 'u7@t', '66878901234'),
-  ('a8000000-0000-0000-0000-000000000008', 'u8@t', null),
-  ('a9000000-0000-0000-0000-000000000009', 'u9@t', ''),
-  ('ad000000-0000-0000-0000-00000000000d', 'admin@t', '66800000000');
+insert into auth.users (id, email, phone, phone_confirmed_at) values
+  ('a1000000-0000-0000-0000-000000000001', 'u1@t', '66812345678', now()),
+  ('a2000000-0000-0000-0000-000000000002', 'u2@t', '66823456789', now()),
+  ('a3000000-0000-0000-0000-000000000003', 'u3@t', '66834567890', now()),
+  ('a4000000-0000-0000-0000-000000000004', 'u4@t', '66845678901', now()),
+  ('a5000000-0000-0000-0000-000000000005', 'u5@t', '66856789012', now()),
+  ('a6000000-0000-0000-0000-000000000006', 'u6@t', '66867890123', now()),
+  ('a7000000-0000-0000-0000-000000000007', 'u7@t', '66878901234', now()),
+  ('a8000000-0000-0000-0000-000000000008', 'u8@t', null, now()),
+  ('a9000000-0000-0000-0000-000000000009', 'u9@t', '', now()),
+  ('ad000000-0000-0000-0000-00000000000d', 'admin@t', '66800000000', now());
 -- profiles exist (on_auth_user_created) and start disabled; the admin is active.
 insert into user_roles (user_id, role) values ('ad000000-0000-0000-0000-00000000000d', 'admin');
 update profiles set is_active = true where id = 'ad000000-0000-0000-0000-00000000000d';
@@ -222,11 +222,54 @@ begin
   end;
 end $$;
 
+-- ===== hardening: unconfirmed phone and privileged accounts cannot claim =====
+-- X1: phone not confirmed. X2: doctor, disabled by an admin. X3: caregiver (active). X4: admin (active).
+-- Each has an unowned patient row with a matching phone.
+reset role;
+insert into auth.users (id, email, phone, phone_confirmed_at) values
+  ('e1000000-0000-0000-0000-000000000001', 'x1@t', '66811110001', null),
+  ('e2000000-0000-0000-0000-000000000002', 'x2@t', '66811110002', now()),
+  ('e3000000-0000-0000-0000-000000000003', 'x3@t', '66811110003', now()),
+  ('e4000000-0000-0000-0000-000000000004', 'x4@t', '66811110004', now());
+insert into user_roles (user_id, role) values
+  ('e2000000-0000-0000-0000-000000000002', 'doctor'),
+  ('e3000000-0000-0000-0000-000000000003', 'caregiver'),
+  ('e4000000-0000-0000-0000-000000000004', 'admin');
+update profiles set is_active = true where id in ('e3000000-0000-0000-0000-000000000003', 'e4000000-0000-0000-0000-000000000004');
+insert into patients (id, user_id, full_name, phone) values
+  ('f1000000-0000-0000-0000-000000000001', null, 'X1 row', '0811110001'),
+  ('f2000000-0000-0000-0000-000000000002', null, 'X2 row', '0811110002'),
+  ('f3000000-0000-0000-0000-000000000003', null, 'X3 row', '0811110003'),
+  ('f4000000-0000-0000-0000-000000000004', null, 'X4 row', '0811110004');
+set local role authenticated;
+do $$
+declare u text;
+begin
+  foreach u in array array['e1000000-0000-0000-0000-000000000001', 'e2000000-0000-0000-0000-000000000002',
+                           'e3000000-0000-0000-0000-000000000003', 'e4000000-0000-0000-0000-000000000004'] loop
+    perform set_config('request.jwt.claims', '{"sub":"' || u || '"}', true);
+    begin
+      perform claim_my_patient();
+      raise exception 'hardening: % could claim', u;
+    exception when insufficient_privilege then null;
+    end;
+  end loop;
+end $$;
+reset role;
+do $$
+begin
+  assert (select count(*) from patients where id::text like 'f_000000-%' and user_id is not null) = 0, 'hardening: a row was bound';
+  assert not (select is_active from profiles where id = 'e1000000-0000-0000-0000-000000000001'), 'hardening: X1 activated';
+  assert not (select is_active from profiles where id = 'e2000000-0000-0000-0000-000000000002'), 'hardening: disabled doctor re-enabled';
+  assert not exists (select 1 from user_roles where user_id = 'e1000000-0000-0000-0000-000000000001'), 'hardening: X1 got a role';
+  assert not exists (select 1 from audit_logs where actor::text like 'e_000000-%'), 'hardening: audit written';
+end $$;
+
 -- ===== guard still works for direct updates as `authenticated` =====
 -- A patient has no UPDATE right on patients at all (RLS: 0 rows), so the real test of the guard is a doctor who
 -- may edit the row (can_manage_plan) but is not admin: changing user_id must still raise 42501.
 reset role;
-insert into auth.users (id, email, phone) values ('dc000000-0000-0000-0000-00000000000c', 'doc@t', '66899999999');
+insert into auth.users (id, email, phone, phone_confirmed_at) values ('dc000000-0000-0000-0000-00000000000c', 'doc@t', '66899999999', now());
 update profiles set is_active = true where id = 'dc000000-0000-0000-0000-00000000000c';
 insert into user_roles (user_id, role) values ('dc000000-0000-0000-0000-00000000000c', 'doctor');
 insert into doctors (id, user_id, full_name) values ('dd000000-0000-0000-0000-00000000000d', 'dc000000-0000-0000-0000-00000000000c', 'Doc');

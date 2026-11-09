@@ -4,6 +4,7 @@ create table auth.users (
   id uuid primary key default gen_random_uuid(),
   email text,
   phone text,
+  phone_confirmed_at timestamptz,
   raw_user_meta_data jsonb default '{}'
 );
 -- Same contract as Supabase: the user id comes from the request.jwt.claims setting; unset/empty = null.
