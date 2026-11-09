@@ -51,3 +51,43 @@ export const planRpcArgs = (patientId: string, f: PlanForm, times: string[], sta
   p_plan_id: f.id, p_patient_id: patientId, p_medicine_id: f.medicineId, p_dose: f.dose, p_meal_relation: f.meal || null,
   p_start: f.start, p_end: f.end || null, p_note: f.note || null, p_times: times, p_status: status,
 })
+
+export type LogRow = {
+  id: string; scheduled_at: string; status: 'pending' | 'taken' | 'skipped' | 'missed'; taken_at: string | null; is_late: boolean
+  medication_plans: { patient_id: string; patients: { full_name: string } | null; medicines: { generic_name: string; trade_name: string | null } | null } | null
+}
+
+const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+const hm = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+// `d MMM yyyy HH:mm` in the machine's local zone, Thai month and Buddhist year (same convention as the th-TH formatter in ui.tsx)
+export const fmtLocal = (iso: string) => { const d = new Date(iso); return `${d.getDate()} ${THAI_MONTHS[d.getMonth()]} ${d.getFullYear() + 543} ${hm(d)}` }
+
+export function logRowToView(r: LogRow) {
+  const label = logStatusLabel(r.status, r.is_late)
+  const med = r.medication_plans?.medicines
+  return {
+    id: r.id,
+    patient: r.medication_plans?.patients?.full_name || '-',
+    medicine: med?.trade_name || med?.generic_name || '-',
+    statusLabel: label,
+    tone: label === 'ทานแล้ว' ? 'green' as const : label === 'เลท' ? 'yellow' as const : 'gray' as const,
+    scheduled: fmtLocal(r.scheduled_at),
+    takenAt: r.taken_at ? hm(new Date(r.taken_at)) : '-',
+  }
+}
+export type LogView = ReturnType<typeof logRowToView>
+
+export type LogFilter = { patientId: string; from: string; to: string; status: string } // from/to: yyyy-mm-dd (local day), status: '' | taken | late | skipped
+const localDay = (s: string, plus = 0) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d + plus).toISOString() }
+
+// fromIso is inclusive (start of the local day); toIso is EXCLUSIVE: the start of the day after `to`, so query with gte/lt
+export function logFilterToQuery(f: LogFilter) {
+  const q: { patientId?: string; fromIso?: string; toIso?: string; statusMatch?: { status: 'taken' | 'skipped'; isLate?: boolean } } = {}
+  if (f.patientId) q.patientId = f.patientId
+  if (f.from) q.fromIso = localDay(f.from)
+  if (f.to) q.toIso = localDay(f.to, 1)
+  if (f.status === 'taken') q.statusMatch = { status: 'taken', isLate: false }
+  else if (f.status === 'late') q.statusMatch = { status: 'taken', isLate: true }
+  else if (f.status === 'skipped') q.statusMatch = { status: 'skipped' }
+  return q
+}

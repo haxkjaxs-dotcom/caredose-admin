@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isHHmm, isThaiMobile, logStatusLabel, normalizeTimes, planRowToView, planToForm, planRpcArgs, validatePlanForm } from './plans'
+import { isHHmm, isThaiMobile, logFilterToQuery, logRowToView, logStatusLabel, normalizeTimes, planRowToView, planToForm, planRpcArgs, validatePlanForm } from './plans'
 
 describe('isThaiMobile', () => {
   it('accepts 10 digits starting 06/08/09, ignoring spaces and dashes', () => {
@@ -113,5 +113,54 @@ describe('plan form -> save_plan args', () => {
     expect(a.p_plan_id).toBeNull()
     expect(a.p_status).toBe('active')
     expect([a.p_end, a.p_meal_relation, a.p_note]).toEqual([null, null, null])
+  })
+})
+
+describe('logRowToView', () => {
+  // local-time Dates -> ISO, so the expectations hold in any machine zone
+  const at = new Date(2026, 10, 9, 8, 5).toISOString()
+  const row = {
+    id: 'l1', scheduled_at: at, status: 'taken' as const, taken_at: new Date(2026, 10, 9, 8, 30).toISOString(), is_late: false,
+    medication_plans: { patient_id: 'p1', patients: { full_name: 'สมชาย ใจดี' }, medicines: { generic_name: 'Metformin', trade_name: 'Glucophage' } },
+  }
+  it('maps names, local times, label and tone', () => {
+    const v = logRowToView(row)
+    expect(v).toMatchObject({ patient: 'สมชาย ใจดี', medicine: 'Glucophage', statusLabel: 'ทานแล้ว', tone: 'green', scheduled: '9 พ.ย. 2569 08:05', takenAt: '08:30' })
+  })
+  it('taken + late is yellow เลท', () => {
+    expect(logRowToView({ ...row, is_late: true })).toMatchObject({ statusLabel: 'เลท', tone: 'yellow' })
+  })
+  it('skipped is gray ยังไม่ได้ทาน; pending is gray ยังไม่บันทึก', () => {
+    expect(logRowToView({ ...row, status: 'skipped', taken_at: null })).toMatchObject({ statusLabel: 'ยังไม่ได้ทาน', tone: 'gray', takenAt: '-' })
+    expect(logRowToView({ ...row, status: 'pending', taken_at: null })).toMatchObject({ statusLabel: 'ยังไม่บันทึก', tone: 'gray' })
+  })
+  it('falls back to generic name when trade name is missing or empty', () => {
+    const m = (trade_name: string | null) => ({ ...row, medication_plans: { ...row.medication_plans, medicines: { generic_name: 'Metformin', trade_name } } })
+    expect(logRowToView(m(null)).medicine).toBe('Metformin')
+    expect(logRowToView(m('')).medicine).toBe('Metformin')
+  })
+  it('does not throw on null joins', () => {
+    const v = logRowToView({ ...row, medication_plans: null })
+    expect([v.patient, v.medicine]).toEqual(['-', '-'])
+    expect(logRowToView({ ...row, medication_plans: { patient_id: 'p1', patients: null, medicines: null } }).patient).toBe('-')
+  })
+})
+
+describe('logFilterToQuery', () => {
+  it('empty filter -> nothing', () => {
+    expect(logFilterToQuery({ patientId: '', from: '', to: '', status: '' })).toEqual({})
+  })
+  it('from = start of local day, to = start of the NEXT local day (exclusive)', () => {
+    const q = logFilterToQuery({ patientId: 'p1', from: '2026-11-09', to: '2026-11-30', status: '' })
+    expect(q.patientId).toBe('p1')
+    expect(q.fromIso).toBe(new Date(2026, 10, 9).toISOString())
+    expect(q.toIso).toBe(new Date(2026, 11, 1).toISOString()) // rolls over the month end
+  })
+  it('status mapping', () => {
+    const s = (status: string) => logFilterToQuery({ patientId: '', from: '', to: '', status }).statusMatch
+    expect(s('taken')).toEqual({ status: 'taken', isLate: false })
+    expect(s('late')).toEqual({ status: 'taken', isLate: true })
+    expect(s('skipped')).toEqual({ status: 'skipped' })
+    expect(s('')).toBeUndefined()
   })
 })
