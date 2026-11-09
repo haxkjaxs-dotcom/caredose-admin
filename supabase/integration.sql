@@ -152,3 +152,146 @@ end
 $$;
 revoke execute on function save_my_profile(text, text, int, text[], text) from public, anon;
 grant execute on function save_my_profile(text, text, int, text[], text) to authenticated;
+
+-- 6) Audit trigger for plan changes. Browsers cannot write audit_logs (security_fixes #8), so the trigger writes as definer.
+--    auth.uid() is null for SQL-editor / service-role work: audit_logs.actor is nullable, so that is recorded as a null actor.
+--    No-op updates are skipped. The trigger never raises on its own and writes only audit_logs (which has no trigger), so no recursion.
+create or replace function audit_plan_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into audit_logs (actor, action, table_name, row_id, new_value)
+      values (auth.uid(), tg_table_name || '.insert', tg_table_name, new.id::text, to_jsonb(new));
+  elsif tg_op = 'UPDATE' then
+    if to_jsonb(old) is distinct from to_jsonb(new) then
+      insert into audit_logs (actor, action, table_name, row_id, old_value, new_value)
+        values (auth.uid(), tg_table_name || '.update', tg_table_name, new.id::text, to_jsonb(old), to_jsonb(new));
+    end if;
+  else
+    insert into audit_logs (actor, action, table_name, row_id, old_value)
+      values (auth.uid(), tg_table_name || '.delete', tg_table_name, old.id::text, to_jsonb(old));
+  end if;
+  return null;
+end
+$$;
+-- only the trigger machinery calls it; privileges are checked at CREATE TRIGGER, not when it fires
+revoke execute on function audit_plan_change() from public, anon, authenticated;
+drop trigger if exists medication_plans_audit on medication_plans;
+create trigger medication_plans_audit after insert or update or delete on medication_plans
+  for each row execute function audit_plan_change();
+drop trigger if exists medication_schedules_audit on medication_schedules;
+create trigger medication_schedules_audit after insert or update or delete on medication_schedules
+  for each row execute function audit_plan_change();
+
+-- 7) save_plan: create or edit a medication plan and its times in one transaction.
+--    Security definer, so it bypasses RLS: the permission checks below run before the first write and are the only gate.
+--    Tables touched: patients (existence check), medicines (read), medication_plans (read+lock, insert/update),
+--    medication_schedules (lock, insert, delete), medication_logs (existence check only). Audit rows come from the triggers above.
+--    Every input is validated before the first write, and any later raise rolls the whole call back.
+create or replace function save_plan(p_plan_id uuid, p_patient_id uuid, p_medicine_id uuid, p_dose text, p_meal_relation text,
+                                     p_start date, p_end date, p_note text, p_times text[], p_status text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_dose text := regexp_replace(p_dose, '^\s+|\s+$', '', 'g');
+  v_meal text := nullif(regexp_replace(p_meal_relation, '^\s+|\s+$', '', 'g'), '');
+  v_note text := nullif(regexp_replace(p_note, '^\s+|\s+$', '', 'g'), '');
+  old_p medication_plans%rowtype;
+  pid uuid;
+  med_active boolean;
+  ts time[];
+  blocked text;
+begin
+  if auth.uid() is null or not is_active_user() or p_patient_id is null or not can_manage_plan(p_patient_id) then
+    raise exception 'ไม่มีสิทธิ์จัดการแผนยาของผู้ป่วยรายนี้' using errcode = '42501';
+  end if;
+  if not exists (select 1 from patients where id = p_patient_id) then
+    raise exception 'ไม่พบผู้ป่วย' using errcode = '22023';
+  end if;
+
+  -- an existing plan must belong to the patient the caller was authorised for (else a doctor of X could edit Y's plan).
+  -- Same answer for "no such plan", so plan ids cannot be probed. The row lock serialises concurrent saves of one plan.
+  if p_plan_id is not null then
+    select * into old_p from medication_plans where id = p_plan_id and patient_id = p_patient_id for update;
+    if not found then
+      raise exception 'ไม่พบแผนยาของผู้ป่วยนี้' using errcode = '42501';
+    end if;
+  end if;
+
+  if coalesce(v_dose, '') = '' then
+    raise exception 'กรุณาระบุขนาดยา' using errcode = '22023';
+  end if;
+  if char_length(v_dose) > 100 then
+    raise exception 'ขนาดยาต้องไม่เกิน 100 ตัวอักษร' using errcode = '22023';
+  end if;
+  if char_length(v_meal) > 50 then
+    raise exception 'ความสัมพันธ์กับมื้ออาหารต้องไม่เกิน 50 ตัวอักษร' using errcode = '22023';
+  end if;
+  if char_length(v_note) > 500 then
+    raise exception 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร' using errcode = '22023';
+  end if;
+  if p_start is null then
+    raise exception 'กรุณาระบุวันเริ่มทานยา' using errcode = '22023';
+  end if;
+  if p_end is not null and p_end < p_start then
+    raise exception 'วันสิ้นสุดต้องไม่ก่อนวันเริ่ม' using errcode = '22023';
+  end if;
+  if p_status is null or p_status not in ('active', 'stopped') then
+    raise exception 'สถานะแผนยาไม่ถูกต้อง' using errcode = '22023';
+  end if;
+  if coalesce(cardinality(p_times), 0) = 0 then
+    raise exception 'กรุณาระบุเวลาทานยาอย่างน้อย 1 เวลา' using errcode = '22023';
+  end if;
+  if cardinality(p_times) > 12 then
+    raise exception 'กำหนดเวลาทานยาได้ไม่เกิน 12 เวลา' using errcode = '22023';
+  end if;
+  if exists (select 1 from unnest(p_times) t where t is null or t !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$') then
+    raise exception 'รูปแบบเวลาต้องเป็น HH:mm (00:00-23:59)' using errcode = '22023';
+  end if;
+  if (select count(distinct t) from unnest(p_times) t) <> cardinality(p_times) then
+    raise exception 'เวลาทานยาซ้ำกัน' using errcode = '22023';
+  end if;
+  -- compare times as time values, never as text
+  select array_agg(t::time) into ts from unnest(p_times) t;
+
+  -- medicine: a NEW choice must be active; a plan may keep its current medicine after it was deactivated
+  -- (otherwise an old plan could no longer be edited or stopped)
+  select is_active into med_active from medicines where id = p_medicine_id;
+  if not found then
+    raise exception 'ไม่พบยาที่เลือก' using errcode = '22023';
+  end if;
+  if not med_active and not (p_plan_id is not null and old_p.medicine_id = p_medicine_id) then
+    raise exception 'ยานี้ถูกปิดใช้งาน เลือกยาอื่น' using errcode = '22023';
+  end if;
+
+  if p_plan_id is not null then
+    -- lock the schedules that would go, THEN look for logs in a fresh statement: a log insert takes a key-share lock
+    -- on its schedule, so no log can slip in between this check and the delete (the cascade would erase it)
+    perform 1 from medication_schedules where plan_id = p_plan_id and time_of_day <> all (ts) for update;
+    select string_agg(to_char(s.time_of_day, 'HH24:MI'), ', ' order by s.time_of_day) into blocked
+      from medication_schedules s
+      where s.plan_id = p_plan_id and s.time_of_day <> all (ts)
+        and exists (select 1 from medication_logs l where l.schedule_id = s.id);
+    if blocked is not null then
+      raise exception 'ไม่สามารถเอาเวลา % ออกได้ เพราะมีบันทึกการทานยาแล้ว กรุณาหยุดแผนนี้แล้วสร้างแผนใหม่แทน', blocked;
+    end if;
+
+    update medication_plans set medicine_id = p_medicine_id, dose = v_dose, meal_relation = v_meal, start_date = p_start,
+           end_date = p_end, status = p_status, doctor_note = v_note
+      where id = p_plan_id;
+    pid := p_plan_id;
+    delete from medication_schedules where plan_id = pid and time_of_day <> all (ts);
+  else
+    insert into medication_plans (patient_id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, created_by)
+      values (p_patient_id, p_medicine_id, v_dose, v_meal, p_start, p_end, p_status, v_note, auth.uid())
+      returning id into pid;
+  end if;
+
+  insert into medication_schedules (plan_id, time_of_day)
+    select pid, t from unnest(ts) t
+    where not exists (select 1 from medication_schedules s where s.plan_id = pid and s.time_of_day = t);
+  return pid;
+end
+$$;
+revoke execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text) from public, anon;
+grant execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text) to authenticated;
