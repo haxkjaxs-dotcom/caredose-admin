@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isHHmm, isThaiMobile, logStatusLabel, normalizeTimes, planRowToView, validatePlanForm } from './plans'
+import { isHHmm, isThaiMobile, logStatusLabel, normalizeTimes, planRowToView, planToForm, planRpcArgs, validatePlanForm } from './plans'
 
 describe('isThaiMobile', () => {
   it('accepts 10 digits starting 06/08/09, ignoring spaces and dashes', () => {
@@ -88,5 +88,30 @@ describe('planRowToView', () => {
   it('handles a plan without schedules or medicine', () => {
     expect(planRowToView({ ...row, medication_schedules: [] }).times).toEqual([])
     expect(planRowToView({ ...row, medicines: null, medication_schedules: null }).name).toBe('-')
+  })
+})
+
+describe('plan form -> save_plan args', () => {
+  const view = planRowToView({
+    id: 'p1', medicine_id: 'm1', dose: '1 เม็ด', meal_relation: null, start_date: '2026-01-01', end_date: null,
+    status: 'active', doctor_note: null, medicines: null, medication_schedules: [{ time_of_day: '08:00:00' }],
+  })
+  it('editing an active plan keeps it active and sends the plan id', () => {
+    const a = planRpcArgs('pat', planToForm(view), ['08:00'])
+    expect(a.p_status).toBe('active')
+    expect(a.p_plan_id).toBe('p1')
+    expect(a.p_patient_id).toBe('pat')
+  })
+  it('editing a stopped plan keeps it stopped', () => {
+    expect(planRpcArgs('pat', planToForm({ ...view, status: 'stopped' }), ['08:00']).p_status).toBe('stopped')
+  })
+  it('a stop override wins', () => {
+    expect(planRpcArgs('pat', planToForm(view), ['08:00'], 'stopped').p_status).toBe('stopped')
+  })
+  it('a new plan is active with no plan id; empty end/meal/note become null', () => {
+    const a = planRpcArgs('pat', { ...planToForm(view), id: null, status: 'active' }, ['08:00'])
+    expect(a.p_plan_id).toBeNull()
+    expect(a.p_status).toBe('active')
+    expect([a.p_end, a.p_meal_relation, a.p_note]).toEqual([null, null, null])
   })
 })

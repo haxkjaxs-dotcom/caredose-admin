@@ -1,23 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../supabase'
 import { Badge, Btn, Card, Field, H, Modal, Select, Table, inputCls } from '../ui'
-import { normalizeTimes, planRowToView, validatePlanForm, type PlanRow, type PlanView } from '../lib/plans'
+import { normalizeTimes, planRowToView, planRpcArgs, planToForm, validatePlanForm, type PlanForm as Form, type PlanRow, type PlanView } from '../lib/plans'
 import type { Ctx } from '../ctx'
 
 type Patient = { id: string; full_name: string }
 type Med = { id: string; generic_name: string; trade_name: string | null; is_active: boolean }
-type Form = { id: string | null; medicineId: string; dose: string; meal: string; start: string; end: string; note: string; times: string[] }
 
 const today = () => new Date().toLocaleDateString('en-CA')
-const blank = (): Form => ({ id: null, medicineId: '', dose: '', meal: '', start: today(), end: '', note: '', times: ['08:00'] })
-const toForm = (v: PlanView): Form => ({ id: v.id, medicineId: v.medicineId, dose: v.dose, meal: v.meal, start: v.start, end: v.end, note: v.note, times: v.times.length ? v.times : [''] })
+const blank = (): Form => ({ id: null, medicineId: '', dose: '', meal: '', start: today(), end: '', note: '', times: ['08:00'], status: 'active' })
 
 // every write goes through the save_plan RPC: the database checks permission, the UI only hides buttons
-const savePlan = (patientId: string, f: Form, times: string[], status: 'active' | 'stopped') =>
-  supabase.rpc('save_plan', {
-    p_plan_id: f.id, p_patient_id: patientId, p_medicine_id: f.medicineId, p_dose: f.dose, p_meal_relation: f.meal || null,
-    p_start: f.start, p_end: f.end || null, p_note: f.note || null, p_times: times, p_status: status,
-  })
+const savePlan = (patientId: string, f: Form, times: string[], status?: string) =>
+  supabase.rpc('save_plan', planRpcArgs(patientId, f, times, status))
 
 const ErrBox = ({ children }: { children: string }) => <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{children}</div>
 const Hint = ({ children }: { children: string }) => <p className="py-8 text-center text-slate-400">{children}</p>
@@ -60,7 +55,7 @@ export function Plans({ notify, role }: Ctx) {
 
   const stop = async (v: PlanView) => {
     if (!confirm(`หยุดแผนยา ${v.name}?`)) return
-    const { error } = await savePlan(pid, toForm(v), v.times, 'stopped')
+    const { error } = await savePlan(pid, planToForm(v), v.times, 'stopped')
     if (error) return notify(error.message)
     notify('หยุดแผนยาแล้ว')
     load(pid)
@@ -79,7 +74,7 @@ export function Plans({ notify, role }: Ctx) {
               head={['ยา', 'ขนาด', 'มื้อ', 'ช่วงวัน', 'เวลา', 'สถานะ', '']}
               rows={plans.map((v) => [<b>{v.name}</b>, v.dose, v.meal || '-', v.range, v.times.join(', ') || '-',
                 <Badge tone={v.status === 'active' ? 'green' : 'gray'}>{v.statusLabel}</Badge>,
-                canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => setForm(toForm(v))}>แก้ไข</Btn>{v.status === 'active' && <Btn kind="danger" onClick={() => stop(v)}>หยุดแผน</Btn>}</div> : ''])}
+                canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => setForm(planToForm(v))}>แก้ไข</Btn>{v.status === 'active' && <Btn kind="danger" onClick={() => stop(v)}>หยุดแผน</Btn>}</div> : ''])}
             />
           )}
       </Card>
@@ -103,7 +98,7 @@ function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; p
     if (bad) return setErr(bad)
     setBusy(true)
     setErr('')
-    const { error } = await savePlan(pid, f, times, 'active')
+    const { error } = await savePlan(pid, f, times)
     setBusy(false)
     if (error) return setErr(error.message)
     notify(f.id ? 'แก้ไขแผนยาแล้ว' : 'เพิ่มแผนยาแล้ว')

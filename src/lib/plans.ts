@@ -38,3 +38,16 @@ export function planRowToView(r: PlanRow) {
   }
 }
 export type PlanView = ReturnType<typeof planRowToView>
+
+export type PlanForm = { id: string | null; medicineId: string; dose: string; meal: string; start: string; end: string; note: string; times: string[]; status: string }
+
+// status is carried through so editing a stopped plan does not re-activate it
+export const planToForm = (v: PlanView): PlanForm => ({
+  id: v.id, medicineId: v.medicineId, dose: v.dose, meal: v.meal, start: v.start, end: v.end, note: v.note,
+  times: v.times.length ? v.times : [''], status: v.status,
+})
+
+export const planRpcArgs = (patientId: string, f: PlanForm, times: string[], status = f.status) => ({
+  p_plan_id: f.id, p_patient_id: patientId, p_medicine_id: f.medicineId, p_dose: f.dose, p_meal_relation: f.meal || null,
+  p_start: f.start, p_end: f.end || null, p_note: f.note || null, p_times: times, p_status: status,
+})
