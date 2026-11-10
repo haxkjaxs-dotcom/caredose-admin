@@ -355,3 +355,60 @@ create policy sched_d on medication_schedules for delete to authenticated using 
 drop policy if exists log_i_same_plan on medication_logs;
 create policy log_i_same_plan on medication_logs as restrictive for insert to authenticated
   with check (exists (select 1 from medication_schedules s where s.id = schedule_id and s.plan_id = medication_logs.plan_id));
+
+-- 8) Phase 2: admin messages to a linked patient.
+--    notifications has no insert policy on purpose (browsers cannot write it); this security definer function is the only
+--    way in. Note the existing notif_u policy lets the owner edit any column of their own rows (title/body too), not just
+--    `read`. Harmless for a message the owner already holds; tighten when the inbox matters beyond a demo.
+create or replace function send_notification(p_patient_id uuid, p_title text, p_body text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_title text := regexp_replace(p_title, '^\s+|\s+$', '', 'g');
+  v_body text := regexp_replace(p_body, '^\s+|\s+$', '', 'g');
+  v_user uuid;
+  nid uuid;
+begin
+  if auth.uid() is null or not is_active_user() or not has_role('admin') then
+    raise exception 'ไม่มีสิทธิ์ส่งข้อความ' using errcode = '42501';
+  end if;
+  if coalesce(v_title, '') = '' then
+    raise exception 'กรุณากรอกหัวข้อ' using errcode = '22023';
+  end if;
+  if char_length(v_title) > 100 then
+    raise exception 'หัวข้อต้องไม่เกิน 100 ตัวอักษร' using errcode = '22023';
+  end if;
+  if coalesce(v_body, '') = '' then
+    raise exception 'กรุณากรอกข้อความ' using errcode = '22023';
+  end if;
+  if char_length(v_body) > 500 then
+    raise exception 'ข้อความต้องไม่เกิน 500 ตัวอักษร' using errcode = '22023';
+  end if;
+  select user_id into v_user from patients where id = p_patient_id;
+  if not found then
+    raise exception 'ไม่พบผู้ป่วย' using errcode = '22023';
+  end if;
+  if v_user is null then
+    raise exception 'ผู้ป่วยรายนี้ยังไม่ได้เชื่อมแอป' using errcode = '22023';
+  end if;
+  insert into notifications (user_id, type, title, body, patient_id)
+    values (v_user, 'admin_message', v_title, v_body, p_patient_id)
+    returning id into nid;
+  insert into audit_logs (actor, action, table_name, row_id, new_value)
+    values (auth.uid(), 'send_notification', 'notifications', nid::text,
+            jsonb_build_object('patient_id', p_patient_id, 'title', v_title));
+  return nid;
+end
+$$;
+revoke execute on function send_notification(uuid, text, text) from public, anon;
+grant execute on function send_notification(uuid, text, text) to authenticated;
+
+-- Realtime: let the app hear new rows. RLS (notif_r) still decides who receives which row.
+-- No-op where the publication does not exist (PGlite tests) or the table is already published (re-runs).
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'notifications') then
+    alter publication supabase_realtime add table notifications;
+  end if;
+end $$;
