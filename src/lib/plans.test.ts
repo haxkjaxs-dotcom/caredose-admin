@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isHHmm, isThaiMobile, logFilterToQuery, logRowToView, logStatusLabel, normalizePhoneDigits, normalizeTimes, planRowToView, planToForm, planRpcArgs, samePhoneGroups, validatePlanForm } from './plans'
+import { isHHmm, isThaiMobile, ruleLabel, logFilterToQuery, logRowToView, logStatusLabel, normalizePhoneDigits, normalizeTimes, planRowToView, planToForm, planRpcArgs, samePhoneGroups, validatePlanForm } from './plans'
 
 describe('isThaiMobile', () => {
   it('accepts 10 digits starting 06/08/09, ignoring spaces and dashes', () => {
@@ -34,7 +34,7 @@ describe('normalizeTimes', () => {
 })
 
 describe('validatePlanForm', () => {
-  const ok = { medicineId: 'm1', dose: '1 เม็ด', start: '2026-01-01', end: '2026-01-31', times: ['08:00'] }
+  const ok = { medicineId: 'm1', dose: '1 เม็ด', start: '2026-01-01', end: '2026-01-31', times: ['08:00'], ruleKind: 'daily' as const, days: [] as number[], interval: '' }
   it('returns null when valid', () => {
     expect(validatePlanForm(ok)).toBeNull()
     expect(validatePlanForm({ ...ok, end: '' })).toBeNull()
@@ -71,6 +71,7 @@ describe('planRowToView', () => {
     expect(planRowToView(row)).toEqual({
       id: 'p1', medicineId: 'm1', name: 'Tylenol', dose: '1 เม็ด', meal: 'หลังอาหาร', start: '2026-01-01', end: '2026-01-31',
       range: '2026-01-01 – 2026-01-31', times: ['08:00', '18:00'], note: 'ทานต่อเนื่อง', status: 'active', statusLabel: 'ใช้งาน',
+      rule: 'ทุกวัน', ruleKind: 'daily', days: [], interval: '',
     })
   })
   it('falls back to generic name when trade name missing', () => {
@@ -183,5 +184,64 @@ describe('samePhoneGroups', () => {
     expect(samePhoneGroups([{ id: 'a', phone: null }, { id: 'b', phone: '' }, { id: 'c', phone: null }]).size).toBe(0)
     expect(samePhoneGroups([{ id: 'a', phone: '0812345678' }, { id: 'b', phone: '0898765432' }]).size).toBe(0)
     expect(samePhoneGroups([{ id: 'a', phone: '0812345678' }]).size).toBe(0)
+  })
+})
+
+describe('ruleLabel', () => {
+  it('says every day for no rule or all seven days', () => {
+    expect(ruleLabel(null, null)).toBe('ทุกวัน')
+    expect(ruleLabel([], null)).toBe('ทุกวัน')
+    expect(ruleLabel([1, 2, 3, 4, 5, 6, 7], null)).toBe('ทุกวัน')
+  })
+  it('lists the chosen weekdays in order, Monday first', () => {
+    expect(ruleLabel([5, 1, 3], null)).toBe('จันทร์/พุธ/ศุกร์')
+    expect(ruleLabel([7], null)).toBe('อาทิตย์')
+  })
+  it('says every N days', () => {
+    expect(ruleLabel(null, 2)).toBe('ทุก 2 วัน')
+  })
+})
+
+describe('validatePlanForm rule', () => {
+  const ok = { medicineId: 'm1', dose: '1', start: '2026-01-01', end: '', times: ['08:00'], ruleKind: 'daily' as const, days: [] as number[], interval: '' }
+  it('weekdays needs at least one day', () => {
+    expect(validatePlanForm({ ...ok, ruleKind: 'weekdays', days: [] })).toBe('เลือกวันที่ทานอย่างน้อย 1 วัน')
+    expect(validatePlanForm({ ...ok, ruleKind: 'weekdays', days: [1] })).toBeNull()
+  })
+  it('interval must be an integer 2-365', () => {
+    for (const bad of ['1', '366', 'abc', '', '2.5', '0']) {
+      expect(validatePlanForm({ ...ok, ruleKind: 'interval', interval: bad })).toBe('ทุก N วัน: N ต้องเป็นจำนวนเต็ม 2-365')
+    }
+    for (const good of ['2', '365']) expect(validatePlanForm({ ...ok, ruleKind: 'interval', interval: good })).toBeNull()
+  })
+  it('ignores leftover days/interval when the kind is another one', () => {
+    expect(validatePlanForm({ ...ok, ruleKind: 'daily', days: [], interval: 'abc' })).toBeNull()
+    expect(validatePlanForm({ ...ok, ruleKind: 'weekdays', days: [2], interval: 'abc' })).toBeNull()
+  })
+})
+
+describe('plan rule <-> view <-> save_plan args', () => {
+  const base = { id: 'p1', medicine_id: 'm1', dose: '1', meal_relation: null, start_date: '2026-01-01', end_date: null, status: 'active', doctor_note: null, medicines: null }
+  it('takes the rule from the earliest-time schedule when rows disagree', () => {
+    const v = planRowToView({ ...base, medication_schedules: [
+      { time_of_day: '20:00:00', days_of_week: null, interval_days: 2 },
+      { time_of_day: '08:00:00', days_of_week: [1, 3], interval_days: null },
+    ] })
+    expect([v.ruleKind, v.days, v.rule]).toEqual(['weekdays', [1, 3], 'จันทร์/พุธ'])
+  })
+  it('reads an interval rule', () => {
+    const v = planRowToView({ ...base, medication_schedules: [{ time_of_day: '08:00:00', days_of_week: null, interval_days: 3 }] })
+    expect([v.ruleKind, v.interval, v.rule]).toEqual(['interval', '3', 'ทุก 3 วัน'])
+  })
+  it('planToForm keeps the rule, so editing or stopping does not reset it', () => {
+    const v = planRowToView({ ...base, medication_schedules: [{ time_of_day: '08:00:00', days_of_week: [2, 4], interval_days: null }] })
+    const a = planRpcArgs('pat', planToForm(v), ['08:00'], 'stopped')
+    expect([a.p_days_of_week, a.p_interval_days, a.p_status]).toEqual([[2, 4], null, 'stopped'])
+  })
+  it('sends days sorted, interval as a number, and nulls for daily', () => {
+    const f = { ...planToForm(planRowToView({ ...base, medication_schedules: [] })), times: ['08:00'] }
+    expect(planRpcArgs('pat', { ...f, ruleKind: 'weekdays', days: [5, 1, 3], interval: '9' }, ['08:00'])).toMatchObject({ p_days_of_week: [1, 3, 5], p_interval_days: null })
+    expect(planRpcArgs('pat', { ...f, ruleKind: 'interval', days: [1], interval: '4' }, ['08:00'])).toMatchObject({ p_days_of_week: null, p_interval_days: 4 })
+    expect(planRpcArgs('pat', { ...f, ruleKind: 'daily', days: [1], interval: '4' }, ['08:00'])).toMatchObject({ p_days_of_week: null, p_interval_days: null })
   })
 })

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../supabase'
 import { Badge, Btn, Card, Field, H, Modal, Select, Table, inputCls } from '../ui'
-import { normalizeTimes, planRowToView, planRpcArgs, planToForm, validatePlanForm, type PlanForm as Form, type PlanRow, type PlanView } from '../lib/plans'
+import { WEEKDAY_NAMES, normalizeTimes, planRowToView, planRpcArgs, planToForm, validatePlanForm, type PlanForm as Form, type PlanRow, type PlanView } from '../lib/plans'
 import type { Ctx } from '../ctx'
 import { canEditPlans } from '../lib/roles'
 
@@ -9,7 +9,7 @@ type Patient = { id: string; full_name: string }
 type Med = { id: string; generic_name: string; trade_name: string | null; is_active: boolean }
 
 const today = () => new Date().toLocaleDateString('en-CA')
-const blank = (): Form => ({ id: null, medicineId: '', dose: '', meal: '', start: today(), end: '', note: '', times: ['08:00'], status: 'active' })
+const blank = (): Form => ({ id: null, medicineId: '', dose: '', meal: '', start: today(), end: '', note: '', times: ['08:00'], status: 'active', ruleKind: 'daily', days: [], interval: '' })
 
 // every write goes through the save_plan RPC: the database checks permission, the UI only hides buttons
 const savePlan = (patientId: string, f: Form, times: string[], status?: string) =>
@@ -43,7 +43,7 @@ export function Plans({ notify, role }: Ctx) {
   const load = async (id: string) => {
     setLoadErr('')
     const { data, error } = await supabase.from('medication_plans')
-      .select('id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, medicines(generic_name, trade_name), medication_schedules(time_of_day)')
+      .select('id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, medicines(generic_name, trade_name), medication_schedules(time_of_day, days_of_week, interval_days)')
       .eq('patient_id', id).order('start_date', { ascending: false })
     if (cur.current !== id) return
     if (error) return setLoadErr('โหลดแผนยาไม่สำเร็จ: ' + error.message)
@@ -73,8 +73,8 @@ export function Plans({ notify, role }: Ctx) {
           : !plans ? <Hint>กำลังโหลด...</Hint>
           : (
             <Table
-              head={['ยา', 'ขนาด', 'มื้อ', 'ช่วงวัน', 'เวลา', 'สถานะ', '']}
-              rows={plans.map((v) => [<b>{v.name}</b>, v.dose, v.meal || '-', v.range, v.times.join(', ') || '-',
+              head={['ยา', 'ขนาด', 'มื้อ', 'ช่วงวัน', 'ความถี่', 'เวลา', 'สถานะ', '']}
+              rows={plans.map((v) => [<b>{v.name}</b>, v.dose, v.meal || '-', v.range, v.rule, v.times.join(', ') || '-',
                 <Badge tone={v.status === 'active' ? 'green' : 'gray'}>{v.statusLabel}</Badge>,
                 canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => setForm(planToForm(v))}>แก้ไข</Btn>{v.status === 'active' && <Btn kind="danger" onClick={() => stop(v)}>หยุดแผน</Btn>}</div> : ''])}
             />
@@ -96,7 +96,7 @@ function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; p
     e.preventDefault()
     if (busy) return
     const times = normalizeTimes(f.times)
-    const bad = validatePlanForm({ medicineId: f.medicineId, dose: f.dose, start: f.start, end: f.end, times })
+    const bad = validatePlanForm({ medicineId: f.medicineId, dose: f.dose, start: f.start, end: f.end, times, ruleKind: f.ruleKind, days: f.days, interval: f.interval })
     if (bad) return setErr(bad)
     setBusy(true)
     setErr('')
@@ -126,6 +126,30 @@ function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; p
           <Field label="วันที่สิ้นสุด (ไม่บังคับ)"><input type="date" className={inputCls} value={f.end} onChange={set('end')} /></Field>
         </div>
         <Field label="หมายเหตุจากแพทย์"><input className={inputCls} value={f.note} onChange={set('note')} maxLength={500} /></Field>
+        <div>
+          <div className="mb-1 text-sm font-medium text-slate-600">ความถี่ *</div>
+          <select aria-label="ความถี่" className={inputCls} value={f.ruleKind} onChange={(e) => setF({ ...f, ruleKind: e.target.value as Form['ruleKind'] })}>
+            <option value="daily">ทุกวัน</option>
+            <option value="weekdays">เฉพาะบางวันของสัปดาห์</option>
+            <option value="interval">ทุก N วัน (นับจากวันที่เริ่ม)</option>
+          </select>
+          {f.ruleKind === 'weekdays' && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {WEEKDAY_NAMES.map((name, i) => {
+                const d = i + 1
+                const on = f.days.includes(d)
+                return (
+                  <button key={d} type="button" aria-pressed={on}
+                    className={`rounded-lg border px-3 py-1 text-sm ${on ? 'border-brand-700 bg-brand-700 text-white' : 'border-slate-300 bg-white'}`}
+                    onClick={() => setF({ ...f, days: on ? f.days.filter((x) => x !== d) : [...f.days, d] })}>{name}</button>
+                )
+              })}
+            </div>
+          )}
+          {f.ruleKind === 'interval' && (
+            <input type="number" min={2} max={365} aria-label="ทุกกี่วัน" className={`${inputCls} mt-2`} value={f.interval} onChange={set('interval')} placeholder="เช่น 2" />
+          )}
+        </div>
         <div>
           <div className="mb-1 text-sm font-medium text-slate-600">เวลาทานยา *</div>
           <div className="space-y-2">
