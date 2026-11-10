@@ -61,3 +61,21 @@ export function needsFollow(logs: DashLog[], now: Date): { patientId: string; na
   }
   return [...by.values()].sort((a, b) => b.skipped - a.skipped || b.late - a.late)
 }
+
+type Page<T> = { data: T[] | null; error: { message: string } | null }
+
+// PostgREST caps one response at 1000 rows without saying so, so read page by page until a short page.
+// Any failing page fails the whole read: partial data would give plausible but wrong dashboard numbers.
+export async function fetchAllPages<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<Page<T>>,
+  pageSize = 1000,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const all: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await fetchPage(from, from + pageSize - 1)
+    if (error) return { data: [], error }
+    const rows = data ?? []
+    all.push(...rows)
+    if (rows.length < pageSize) return { data: all, error: null }
+  }
+}

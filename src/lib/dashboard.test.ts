@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dailyRate, needsFollow, thaiDay, thaiDayStartIso, todayCounts, type DashLog } from './dashboard'
+import { dailyRate, fetchAllPages, needsFollow, thaiDay, thaiDayStartIso, todayCounts, type DashLog } from './dashboard'
 
 // 2026-11-10 12:00 in Thailand (UTC+7)
 const NOW = new Date('2026-11-10T05:00:00Z')
@@ -77,5 +77,36 @@ describe('needsFollow', () => {
   it('skips logs without a plan row', () => {
     const orphan: DashLog = { scheduled_at: '2026-11-10T01:00:00Z', status: 'skipped', is_late: false, medication_plans: null }
     expect(needsFollow([orphan], NOW)).toEqual([])
+  })
+})
+
+describe('fetchAllPages', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => i)
+  const pager = (all: number[]) => (from: number, to: number) => Promise.resolve({ data: all.slice(from, to + 1), error: null })
+
+  it('reads every page, not just the first 1000 rows', async () => {
+    const r = await fetchAllPages(pager(rows(2500)), 1000)
+    expect(r.error).toBeNull()
+    expect(r.data.length).toBe(2500)
+    expect(r.data[2499]).toBe(2499)
+  })
+  it('stops after a short page and after an exact multiple (one empty extra page)', async () => {
+    let calls = 0
+    const counting = (all: number[]) => (from: number, to: number) => { calls++; return pager(all)(from, to) }
+    await fetchAllPages(counting(rows(1500)), 1000)
+    expect(calls).toBe(2)
+    calls = 0
+    expect((await fetchAllPages(counting(rows(2000)), 1000)).data.length).toBe(2000)
+    expect(calls).toBe(3)
+  })
+  it('returns the error of a failing page instead of partial data', async () => {
+    const failing = (from: number) => Promise.resolve(from === 0 ? { data: rows(1000), error: null } : { data: null, error: { message: 'boom' } })
+    const r = await fetchAllPages(failing, 1000)
+    expect(r.error?.message).toBe('boom')
+    expect(r.data).toEqual([])
+  })
+  it('treats null data as an empty page', async () => {
+    const r = await fetchAllPages(() => Promise.resolve({ data: null, error: null }), 1000)
+    expect(r).toEqual({ data: [], error: null })
   })
 })

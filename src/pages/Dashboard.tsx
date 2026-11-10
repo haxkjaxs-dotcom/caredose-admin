@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { Btn, Card, H, Stat, Table } from '../ui'
 import type { Ctx } from '../ctx'
-import { dailyRate, needsFollow, thaiDay, thaiDayStartIso, todayCounts, type DashLog } from '../lib/dashboard'
+import { dailyRate, fetchAllPages, needsFollow, thaiDay, thaiDayStartIso, todayCounts, type DashLog } from '../lib/dashboard'
 
 const DAYS = 7
 const DAY_MS = 86400000
@@ -15,12 +15,14 @@ export function Dashboard({ openPatient }: Ctx) {
     const from = thaiDayStartIso(thaiDay(new Date(now.getTime() - (DAYS - 1) * DAY_MS).toISOString()))
     Promise.all([
       supabase.from('patients').select('id', { count: 'exact', head: true }),
-      // shortcut: default 1000-row query limit, page the query if a deployment logs more than that in 7 days
-      supabase.from('medication_logs').select('scheduled_at, status, is_late, medication_plans(patient_id, patients(full_name))').gte('scheduled_at', from),
+      // ordered by a unique key so pages never overlap or skip rows
+      fetchAllPages<DashLog>((a, b) => supabase.from('medication_logs')
+        .select('scheduled_at, status, is_late, medication_plans(patient_id, patients(full_name))')
+        .gte('scheduled_at', from).order('scheduled_at').order('id').range(a, b) as unknown as PromiseLike<{ data: DashLog[] | null; error: { message: string } | null }>),
     ]).then(([p, l]) => {
       const err = p.error ?? l.error
       if (err) return setState('โหลดข้อมูลไม่สำเร็จ: ' + err.message)
-      setState({ patients: p.count ?? 0, logs: (l.data ?? []) as unknown as DashLog[], now })
+      setState({ patients: p.count ?? 0, logs: l.data, now })
     })
   }, [])
 
