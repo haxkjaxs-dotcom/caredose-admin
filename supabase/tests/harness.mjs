@@ -11,6 +11,8 @@ const files = [
   join(supabase, 'schema.sql'),
   join(supabase, 'security_fixes.sql'),
   ...(existsSync(join(supabase, 'integration.sql')) ? [join(supabase, 'integration.sql')] : []),
+  // security_fixes.sql says "safe to re-run": apply it again so every test also proves the two files converge
+  join(supabase, 'security_fixes.sql'),
   ...readdirSync(tests).filter((f) => /^[1-9].*\.sql$/.test(f)).sort().map((f) => join(tests, f)),
 ];
 

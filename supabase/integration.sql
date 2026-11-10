@@ -1,4 +1,6 @@
 -- App integration on top of schema.sql + security_fixes.sql. Safe to re-run.
+-- Run order: schema.sql -> security_fixes.sql -> integration.sql. Re-running security_fixes.sql afterwards is also safe
+-- (its guard_admin_columns is identical to section 3 here); the test harness does exactly that.
 
 -- 1) New patient columns (filled in by the app)
 alter table patients add column if not exists nickname text,
@@ -295,3 +297,41 @@ end
 $$;
 revoke execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text) from public, anon;
 grant execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text) to authenticated;
+
+-- 8) doctors / medicines: readable only by an active account. schema.sql used `using (true)`, so a brand-new phone
+--    sign-up (profile disabled by default) could read every doctor's name, department and phone with the public key.
+--    Active patients still read both (the plan list embeds medicines and doctor names).
+drop policy if exists doctors_r on doctors;
+create policy doctors_r on doctors for select to authenticated using (is_active_user());
+drop policy if exists med_r on medicines;
+create policy med_r on medicines for select to authenticated using (is_active_user());
+
+-- 9) Plan history. schema.sql gave plan_w / sched_w FOR ALL to everyone who can manage a plan, so a doctor could delete a plan
+--    (cascading away its adherence logs) or relabel a schedule straight over REST, which save_plan refuses to do.
+--    Now: doctors / managing caregivers still insert and edit plans and insert schedules; only admin deletes plans and
+--    deletes/edits schedules. save_plan is security definer and unaffected (it only deletes schedules that have no logs).
+drop policy if exists plan_w on medication_plans;
+drop policy if exists plan_i on medication_plans;
+drop policy if exists plan_u on medication_plans;
+drop policy if exists plan_d on medication_plans;
+create policy plan_i on medication_plans for insert to authenticated with check (can_manage_plan(patient_id));
+create policy plan_u on medication_plans for update to authenticated
+  using (can_manage_plan(patient_id)) with check (can_manage_plan(patient_id));
+create policy plan_d on medication_plans for delete to authenticated using (has_role('admin'));
+
+drop policy if exists sched_w on medication_schedules;
+drop policy if exists sched_i on medication_schedules;
+drop policy if exists sched_u on medication_schedules;
+drop policy if exists sched_d on medication_schedules;
+create policy sched_i on medication_schedules for insert to authenticated
+  with check (exists (select 1 from medication_plans p where p.id = plan_id and can_manage_plan(p.patient_id)));
+create policy sched_u on medication_schedules for update to authenticated
+  using (has_role('admin')) with check (has_role('admin'));
+create policy sched_d on medication_schedules for delete to authenticated using (has_role('admin'));
+
+-- a log must reference a schedule of its own plan (before: any schedule id the caller could see).
+-- A RESTRICTIVE policy is ANDed with log_i from security_fixes #7. It is a separate policy, not an edit of log_i, so
+-- re-running security_fixes.sql (which drops and recreates log_i) cannot silently remove it.
+drop policy if exists log_i_same_plan on medication_logs;
+create policy log_i_same_plan on medication_logs as restrictive for insert to authenticated
+  with check (exists (select 1 from medication_schedules s where s.id = schedule_id and s.plan_id = medication_logs.plan_id));

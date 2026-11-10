@@ -13,15 +13,22 @@ alter table profiles alter column is_active set default false;
 
 -- 3) Only Admin may change who a record belongs to or re-enable a doctor.
 --    auth.uid() is null in the SQL editor / service role, so server-side maintenance still works.
+--    Same definition as integration.sql #3, so running either file after the other changes nothing.
+--    SECURITY INVOKER on purpose: inside a security definer function current_user is the owner, so the current_user
+--    test could never be true. Inside claim_my_patient (definer) current_user is the owner, so it may set user_id.
 create or replace function guard_admin_columns() returns trigger
-language plpgsql security definer set search_path = public as $$
+language plpgsql security invoker set search_path = public as $$
 begin
-  if auth.uid() is not null and not has_role('admin') then
-    if tg_table_name = 'doctors' and (new.user_id is distinct from old.user_id or new.is_active is distinct from old.is_active) then
-      raise exception 'เฉพาะ Admin เท่านั้นที่แก้ไขข้อมูลนี้ได้' using errcode = '42501';
-    end if;
-    if tg_table_name = 'patients' and new.user_id is distinct from old.user_id then
-      raise exception 'เฉพาะ Admin เท่านั้นที่แก้ไขข้อมูลนี้ได้' using errcode = '42501';
+  if auth.uid() is not null and not has_role('admin') and current_user in ('authenticated', 'anon') then
+    -- nested ifs on purpose: plpgsql resolves new.is_active when it plans the expression, and patients has no is_active
+    if tg_table_name = 'doctors' then
+      if new.user_id is distinct from old.user_id or new.is_active is distinct from old.is_active then
+        raise exception 'เฉพาะ Admin เท่านั้นที่แก้ไขข้อมูลนี้ได้' using errcode = '42501';
+      end if;
+    elsif tg_table_name = 'patients' then
+      if new.user_id is distinct from old.user_id then
+        raise exception 'เฉพาะ Admin เท่านั้นที่แก้ไขข้อมูลนี้ได้' using errcode = '42501';
+      end if;
     end if;
   end if;
   return new;

@@ -1,6 +1,9 @@
 -- norm_phone + claim_my_patient (integration.sql). auth.users.phone is stored without '+', e.g. 66812345678.
 -- Users: U1..U3 claim their patient row (stored as 0812.., +66 .., 66..), U4 has no patient, U5 has two rows with
 -- the same phone, U6's number belongs to a row owned by U7, U8 has no phone, U9 has an empty phone (and a patient row with '').
+-- Also safe to paste into the Supabase SQL Editor (after 50_rls_check.sql): one transaction that ends in rollback, every assertion
+-- is scoped to its own fixture ids, and the fixtures use only auth.users columns that exist on a real project. If a real patient
+-- or account already uses one of the fake numbers (e.g. 0812345678) it fails loudly and nothing is kept. "Success. No rows returned" = passed.
 begin;
 
 -- ===== norm_phone =====

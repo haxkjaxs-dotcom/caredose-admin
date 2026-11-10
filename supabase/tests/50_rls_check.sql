@@ -5,6 +5,10 @@
 -- It creates its own users in auth.users with only the columns that exist on a real project and in the local PGlite stub
 -- (id, email). On a real project the SQL editor's role can insert into auth.users; the on_auth_user_created trigger
 -- then creates the (disabled) profiles. Fixture emails end in @rls-check.invalid, so they cannot collide with real accounts.
+-- Result: "Success. No rows returned" means every check passed (the dashboard may hide the NOTICE text); a red error
+-- starting with "RLS CHECK FAILED" names the first violated expectation.
+-- Paste order on a real project: this file (50) first, then 20_claim.sql (claim_my_patient). 30_save_profile.sql and
+-- 40_save_plan.sql are NOT safe to paste: they assert on whole-table counts (all audit_logs / consents / plans), which real data breaks.
 -- Fixtures: A, B patients; CG caregiver of A with can_manage_plan = false; DIS disabled account (admin + patient) with its own data.
 begin;
 
@@ -218,14 +222,14 @@ end $$;
 reset role;
 
 -- ===== disabled account: 0 rows in every patient-data table, and no save_plan =====
--- (doctors/medicines are readable by any signed-in user by design and are not asserted)
+-- (doctors and medicines too: integration.sql #8 limits them to active accounts)
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"dd400000-0000-0000-0000-000000000004"}', true);
 do $$
 declare t text; n int;
 begin
   foreach t in array array['patients', 'medication_plans', 'medication_schedules', 'medication_logs', 'appointments', 'bmi_logs',
-                           'follow_ups', 'patient_doctors', 'patient_caregivers', 'notifications'] loop
+                           'follow_ups', 'patient_doctors', 'patient_caregivers', 'notifications', 'doctors', 'medicines'] loop
     execute format('select count(*) from %I', t) into n;
     perform _rls_check(n = 0, 'disabled account sees ' || n || ' rows in ' || t);
   end loop;
