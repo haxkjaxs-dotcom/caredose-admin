@@ -279,7 +279,7 @@ begin
 end $$;
 reset role;
 
--- ===== edit: keep 08:00 (same id, untouched custom columns), drop 18:00 (no logs), add 20:00 =====
+-- ===== edit: keep 08:00 (same id; phase 2: it adopts the plan's rule, here daily), drop 18:00 (no logs), add 20:00 =====
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"71000000-0000-0000-0000-000000000001"}', true);
 do $$
@@ -294,7 +294,7 @@ declare pid constant uuid := current_setting('t.planE')::uuid;
 begin
   perform set_config('t.s08', (select id::text from medication_schedules where plan_id = pid and time_of_day = '08:00'), true);
   perform set_config('t.s18', (select id::text from medication_schedules where plan_id = pid and time_of_day = '18:00'), true);
-  -- a kept schedule with its own weekday/interval rules must come through unchanged
+  -- a kept schedule with an old rule: the plan-level rule (daily here) replaces it in place, same row id
   update medication_schedules set days_of_week = '{1,3}', interval_days = 2 where id = current_setting('t.s08')::uuid;
 end $$;
 select set_config('t.n_audit', (select count(*) from audit_logs)::text, true);
@@ -319,19 +319,19 @@ begin
      and p.start_date = '2026-12-01' and p.end_date = '2026-12-31' and p.doctor_note = 'โน้ต' and p.status = 'active', 'edit: plan fields';
   assert p.created_by = '71000000-0000-0000-0000-000000000001', 'edit: created_by changed';
   assert exists (select 1 from medication_schedules where id = current_setting('t.s08')::uuid and plan_id = pid
-                   and days_of_week = '{1,3}' and interval_days = 2), 'edit: 08:00 row not kept as is';
+                   and days_of_week is null and interval_days is null), 'edit: 08:00 row not kept (same id, now daily)';
   assert not exists (select 1 from medication_schedules where id = current_setting('t.s18')::uuid), 'edit: 18:00 row not removed';
   assert (select count(*) from medication_schedules where plan_id = pid) = 2, 'edit: schedule count';
   assert exists (select 1 from medication_schedules where plan_id = pid and time_of_day = '20:00' and days_of_week is null and interval_days is null), 'edit: 20:00 not added';
-  assert (select count(*) from audit_logs) = current_setting('t.n_audit')::int + 3, 'edit: audit delta ' || ((select count(*) from audit_logs) - current_setting('t.n_audit')::int);
+  assert (select count(*) from audit_logs) = current_setting('t.n_audit')::int + 4, 'edit: audit delta ' || ((select count(*) from audit_logs) - current_setting('t.n_audit')::int);
   assert (select count(*) from audit_logs where row_id = pid::text and action = 'medication_plans.update'
             and old_value->>'dose' = '1' and new_value->>'dose' = '2 เม็ด' and actor = '72000000-0000-0000-0000-000000000002') = 1, 'edit: plan.update audit';
   assert (select count(*) from audit_logs where action = 'medication_schedules.delete' and row_id = current_setting('t.s18')
             and old_value->>'time_of_day' = '18:00:00' and new_value is null) = 1, 'edit: schedule.delete audit';
   assert (select count(*) from audit_logs where action = 'medication_schedules.insert' and new_value->>'time_of_day' = '20:00:00'
             and new_value->>'plan_id' = pid::text) = 1, 'edit: schedule.insert audit';
-  -- the only update audit row for the kept schedule is the fixture's own days_of_week change
-  assert (select count(*) from audit_logs where action = 'medication_schedules.update' and row_id = current_setting('t.s08')) = 1, 'edit: kept row was touched';
+  -- two update audit rows for the kept schedule: the fixture's own rule change and save_plan resetting it to the plan rule (daily)
+  assert (select count(*) from audit_logs where action = 'medication_schedules.update' and row_id = current_setting('t.s08')) = 2, 'edit: kept row audit count';
 end $$;
 
 -- ===== Review Focus: removing a time that has logs is refused and changes nothing =====

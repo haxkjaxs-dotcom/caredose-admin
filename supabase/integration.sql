@@ -190,8 +190,12 @@ create trigger medication_schedules_audit after insert or update or delete on me
 --    Tables touched: patients (existence check), medicines (read), medication_plans (read+lock, insert/update),
 --    medication_schedules (lock, insert, delete), medication_logs (existence check only). Audit rows come from the triggers above.
 --    Every input is validated before the first write, and any later raise rolls the whole call back.
+--    Phase 2 rule: p_days_of_week (ISO 1=Mon..7=Sun) or p_interval_days (2..365, counted from p_start), never both; null/null = every day.
+--    The rule belongs to the plan, so every schedule row of the plan carries the same one.
+drop function if exists save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text);
 create or replace function save_plan(p_plan_id uuid, p_patient_id uuid, p_medicine_id uuid, p_dose text, p_meal_relation text,
-                                     p_start date, p_end date, p_note text, p_times text[], p_status text)
+                                     p_start date, p_end date, p_note text, p_times text[], p_status text,
+                                     p_days_of_week int[] default null, p_interval_days int default null)
 returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
@@ -256,6 +260,19 @@ begin
   -- compare times as time values, never as text
   select array_agg(t::time) into ts from unnest(p_times) t;
 
+  if p_days_of_week is not null and p_interval_days is not null then
+    raise exception 'เลือกกฎได้เพียงแบบเดียว (เฉพาะวัน หรือ ทุก N วัน)' using errcode = '22023';
+  end if;
+  if p_days_of_week is not null and (
+       cardinality(p_days_of_week) = 0
+       or exists (select 1 from unnest(p_days_of_week) d where d is null or d not between 1 and 7)
+       or (select count(distinct d) from unnest(p_days_of_week) d) <> cardinality(p_days_of_week)) then
+    raise exception 'วันที่ทานต้องเป็น 1-7 ไม่ซ้ำกัน และเลือกอย่างน้อย 1 วัน' using errcode = '22023';
+  end if;
+  if p_interval_days is not null and p_interval_days not between 2 and 365 then
+    raise exception 'ทุก N วัน: N ต้องอยู่ระหว่าง 2 ถึง 365' using errcode = '22023';
+  end if;
+
   -- medicine: a NEW choice must be active; a plan may keep its current medicine after it was deactivated
   -- (otherwise an old plan could no longer be edited or stopped)
   select is_active into med_active from medicines where id = p_medicine_id;
@@ -283,20 +300,23 @@ begin
       where id = p_plan_id;
     pid := p_plan_id;
     delete from medication_schedules where plan_id = pid and time_of_day <> all (ts);
+    -- kept rows adopt the new rule in place (their logs hang off the row id); untouched rows write nothing
+    update medication_schedules set days_of_week = p_days_of_week, interval_days = p_interval_days
+      where plan_id = pid and (days_of_week, interval_days) is distinct from (p_days_of_week, p_interval_days);
   else
     insert into medication_plans (patient_id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, created_by)
       values (p_patient_id, p_medicine_id, v_dose, v_meal, p_start, p_end, p_status, v_note, auth.uid())
       returning id into pid;
   end if;
 
-  insert into medication_schedules (plan_id, time_of_day)
-    select pid, t from unnest(ts) t
+  insert into medication_schedules (plan_id, time_of_day, days_of_week, interval_days)
+    select pid, t, p_days_of_week, p_interval_days from unnest(ts) t
     where not exists (select 1 from medication_schedules s where s.plan_id = pid and s.time_of_day = t);
   return pid;
 end
 $$;
-revoke execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text) from public, anon;
-grant execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text) to authenticated;
+revoke execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text, int[], int) from public, anon;
+grant execute on function save_plan(uuid, uuid, uuid, text, text, date, date, text, text[], text, int[], int) to authenticated;
 
 -- 8) doctors / medicines: readable only by an active account. schema.sql used `using (true)`, so a brand-new phone
 --    sign-up (profile disabled by default) could read every doctor's name, department and phone with the public key.
