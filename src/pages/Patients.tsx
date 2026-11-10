@@ -4,6 +4,7 @@ import type { Tone, Plan } from '../data'
 import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, fmt, inputCls, mName, tones } from '../ui'
 import type { Ctx, FollowUp, Role } from '../ctx'
 import { isThaiMobile, normalizePhoneDigits, samePhoneGroups } from '../lib/plans'
+import { SendNotice } from './SendNotice'
 
 export type DoseStatus = 'ทานแล้ว' | 'เลท' | 'พลาดยา' | 'ยังไม่ได้บันทึก' | 'รอ sync' | 'ยังไม่ถึงกำหนด'
 export type DoseItem = { id: string; date: string; med: string; scheduled: string; recorded: string; status: DoseStatus }
@@ -161,6 +162,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
 
 export function PatientDetail({ id, back, plans, appts, followUps, setFollowUps, notify, role }: Ctx & { id: string; back: () => void }) {
   const [p, setP] = useState<PatientRow | null | undefined>(undefined)
+  const [sending, setSending] = useState(false)
   useEffect(() => {
     supabase.from('patients').select(PATIENT_COLS).eq('id', id).maybeSingle().then(({ data, error }) => {
       if (error) notify('โหลดข้อมูลผู้ป่วยไม่สำเร็จ: ' + error.message)
@@ -180,7 +182,9 @@ export function PatientDetail({ id, back, plans, appts, followUps, setFollowUps,
       <div className="flex items-center gap-3">
         <Btn kind="ghost" onClick={back}>กลับ</Btn>
         <h2 className="text-2xl font-bold">{p.full_name}</h2>
+        {role === 'Admin' && p.user_id && <div className="ml-auto"><Btn kind="ghost" onClick={() => setSending(true)}>ส่งข้อความ</Btn></div>}
       </div>
+      {sending && <SendNotice patientId={p.id} patientName={p.full_name} notify={notify} onClose={() => setSending(false)} />}
       {p.drug_allergies && (
         <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-red-800">
           <b>ประวัติแพ้ยา / ข้อควรระวัง:</b> {p.drug_allergies}
