@@ -55,11 +55,24 @@ export function Plans({ notify, role }: Ctx) {
     if (pid) load(pid)
   }, [pid])
 
-  const stop = async (v: PlanView) => {
-    if (!confirm(`หยุดแผนยา ${v.name}?`)) return
-    const { error } = await savePlan(pid, planToForm(v), v.times, 'stopped')
+  // pause / resume: same save_plan call, only the status changes (the plan and its history stay)
+  const setStatus = async (v: PlanView, status: 'active' | 'stopped') => {
+    if (status === 'stopped' && !confirm(`หยุดแผนยา ${v.name}?`)) return
+    const { error } = await savePlan(pid, planToForm(v), v.times, status)
     if (error) return notify(error.message)
-    notify('หยุดแผนยาแล้ว')
+    notify(status === 'stopped' ? 'หยุดแผนยาแล้ว' : 'เปิดแผนยาอีกครั้งแล้ว')
+    load(pid)
+  }
+
+  // Admin only (plan_d). Deleting a plan also deletes its schedules and adherence logs, so the confirm says so.
+  const remove = async (v: PlanView) => {
+    if (!confirm(`ลบแผนยา ${v.name} ถาวร?
+ตารางเวลาและประวัติการทานยาของแผนนี้จะถูกลบทั้งหมด กู้คืนไม่ได้ (ถ้าแค่ต้องการพัก ให้ใช้ "หยุดแผน")`)) return
+    // select() so a delete that RLS silently filtered out (0 rows) is reported, not shown as success
+    const { data, error } = await supabase.from('medication_plans').delete().eq('id', v.id).select('id')
+    if (error) return notify('ลบแผนยาไม่สำเร็จ: ' + error.message)
+    if (!data?.length) return notify('ลบแผนยาไม่สำเร็จ: ไม่มีสิทธิ์')
+    notify('ลบแผนยาแล้ว')
     load(pid)
   }
 
@@ -76,7 +89,7 @@ export function Plans({ notify, role }: Ctx) {
               head={['ยา', 'ขนาด', 'มื้อ', 'ช่วงวัน', 'ความถี่', 'เวลา', 'สถานะ', '']}
               rows={plans.map((v) => [<b>{v.name}</b>, v.dose, v.meal || '-', v.range, v.rule, v.times.join(', ') || '-',
                 <Badge tone={v.status === 'active' ? 'green' : 'gray'}>{v.statusLabel}</Badge>,
-                canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => setForm(planToForm(v))}>แก้ไข</Btn>{v.status === 'active' && <Btn kind="danger" onClick={() => stop(v)}>หยุดแผน</Btn>}</div> : ''])}
+                canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => setForm(planToForm(v))}>แก้ไข</Btn>{v.status === 'active' ? <Btn kind="danger" onClick={() => setStatus(v, 'stopped')}>หยุดแผน</Btn> : <Btn kind="ghost" onClick={() => setStatus(v, 'active')}>เปิดแผนอีกครั้ง</Btn>}{role === 'Admin' && <Btn kind="danger" onClick={() => remove(v)}>ลบ</Btn>}</div> : ''])}
             />
           )}
       </Card>
