@@ -491,3 +491,30 @@ create policy profiles_u on profiles for update to authenticated
 drop policy if exists cg_i_doctor on caregivers;
 create policy cg_i_doctor on caregivers for insert to authenticated
   with check (has_role('doctor') and is_active_user() and user_id is not null and not is_staff_user(user_id));
+
+-- 13) Security review 2026-11-11.
+--  a) medication_logs: log_u's WITH CHECK only pinned recorded_by, so a patient / caregiver could re-point their log at another
+--     schedule (log_r already blocks other patients' plans) or push scheduled_at forward, which re-opens the 24h edit window for
+--     ever. A non-admin direct API update may now change the dose result only, never which dose the log is about.
+--     SECURITY INVOKER for the same reason as guard_admin_columns (#3). The app's sync upsert re-sends the same values, so it passes.
+create or replace function guard_log_columns() returns trigger
+language plpgsql security invoker set search_path = public as $$
+begin
+  if auth.uid() is not null and not has_role('admin') and current_user in ('authenticated', 'anon')
+     and (new.plan_id, new.schedule_id, new.scheduled_at) is distinct from (old.plan_id, old.schedule_id, old.scheduled_at) then
+    raise exception 'แก้ไขแผนยา เวลานัดทานยา หรือรอบยาของบันทึกนี้ไม่ได้' using errcode = '42501';
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists medication_logs_guard on medication_logs;
+create trigger medication_logs_guard before update on medication_logs for each row execute function guard_log_columns();
+
+--  b) patients: patients_u_doctor used can_manage_plan, so a relative allowed to manage plans could also rewrite the patient's
+--     chart (drug allergies, conditions, phone) over REST. Now only an assigned, active doctor edits it (Admin has patients_w).
+drop policy if exists patients_u_doctor on patients;
+create policy patients_u_doctor on patients for update to authenticated
+  using (is_active_user() and exists (select 1 from patient_doctors pd join doctors d on d.id = pd.doctor_id
+                                      where pd.patient_id = patients.id and pd.active and d.user_id = auth.uid()))
+  with check (is_active_user() and exists (select 1 from patient_doctors pd join doctors d on d.id = pd.doctor_id
+                                           where pd.patient_id = patients.id and pd.active and d.user_id = auth.uid()));
