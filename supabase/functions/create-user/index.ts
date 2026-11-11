@@ -25,10 +25,12 @@ Deno.serve(async (req) => {
   ])
   if (!prof?.is_active || !roles?.some((r) => r.role === 'admin')) return reply({ error: 'ต้องเป็น Admin เท่านั้น' }, 403)
 
-  const { username, full_name, pin, role } = await req.json().catch(() => ({}))
+  const { username, full_name, pin, role, patient_id } = await req.json().catch(() => ({}))
   if (!/^\w{3,30}$/.test(username ?? '') || !/^\d{6}$/.test(pin ?? '') || !String(full_name ?? '').trim() || !ROLES.includes(role)) {
     return reply({ error: 'ข้อมูลไม่ถูกต้อง (ชื่อผู้ใช้ 3-30 ตัว, PIN 6 หลัก, ต้องมีชื่อและสิทธิ์)' }, 400)
   }
+  // optional: link the new patient login to an existing, not yet linked patients row
+  if (patient_id != null && (role !== 'patient' || !/^[0-9a-f-]{36}$/i.test(patient_id))) return reply({ error: 'patient_id ไม่ถูกต้อง' }, 400)
   const name = String(full_name).trim().slice(0, 100)
 
   const { data, error } = await admin.auth.admin.createUser({
@@ -40,15 +42,20 @@ Deno.serve(async (req) => {
   if (error || !data.user) return reply({ error: error?.message ?? 'สร้างบัญชีไม่สำเร็จ' }, 400)
   const id = data.user.id
 
-  // A doctor also needs a doctors row, otherwise RLS shows them no patients.
+  // A doctor also needs a doctors row (else RLS shows them no patients), a caregiver a caregivers row (the Carers page lists those).
   const r1 = await admin.from('user_roles').insert({ user_id: id, role })
-  const r2 = role === 'doctor' ? await admin.from('doctors').insert({ user_id: id, full_name: name }) : { error: null }
+  const r2 = role === 'doctor' ? await admin.from('doctors').insert({ user_id: id, full_name: name })
+    : role === 'caregiver' ? await admin.from('caregivers').insert({ user_id: id, full_name: name, phone: /^\d{9,10}$/.test(username) ? username : null })
+    : { error: null }
   // profiles start disabled (security_fixes.sql), only accounts made here are switched on
   const r3 = await admin.from('profiles').update({ is_active: true }).eq('id', id)
-  if (r1.error || r2.error || r3.error) {
+  // .select() so "no unlinked patient with that id" (0 rows) counts as a failure and rolls the account back
+  const r4 = patient_id ? await admin.from('patients').update({ user_id: id }).eq('id', patient_id).is('user_id', null).select('id') : { error: null, data: [{}] }
+  if (r1.error || r2.error || r3.error || r4.error || !r4.data?.length) {
+    await Promise.all([admin.from('doctors').delete().eq('user_id', id), admin.from('caregivers').delete().eq('user_id', id)]) // else user_id goes null and an orphan row stays
     await admin.auth.admin.deleteUser(id) // cascades profile + role, so no half-made account is left
     return reply({ error: 'ตั้งสิทธิ์ไม่สำเร็จ ยกเลิกการสร้างบัญชี' }, 500)
   }
-  await admin.from('audit_logs').insert({ actor: user.id, action: 'create_user', table_name: 'auth.users', row_id: id, new_value: { username, role } })
+  await admin.from('audit_logs').insert({ actor: user.id, action: 'create_user', table_name: 'auth.users', row_id: id, new_value: { username, role, patient_id: patient_id ?? null } })
   return reply({ id })
 })

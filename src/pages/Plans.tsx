@@ -125,7 +125,7 @@ function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; p
           <Field label="วันที่เริ่ม *"><input type="date" className={inputCls} value={f.start} onChange={set('start')} /></Field>
           <Field label="วันที่สิ้นสุด (ไม่บังคับ)"><input type="date" className={inputCls} value={f.end} onChange={set('end')} /></Field>
         </div>
-        <Field label="หมายเหตุจากแพทย์"><input className={inputCls} value={f.note} onChange={set('note')} maxLength={500} /></Field>
+        <Field label="หมายเหตุจากผู้ดูแลภาพรวม"><input className={inputCls} value={f.note} onChange={set('note')} maxLength={500} /></Field>
         <div>
           <div className="mb-1 text-sm font-medium text-slate-600">ความถี่ *</div>
           <select aria-label="ความถี่" className={inputCls} value={f.ruleKind} onChange={(e) => setF({ ...f, ruleKind: e.target.value as Form['ruleKind'] })}>

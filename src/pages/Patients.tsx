@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
 import type { Tone, Plan } from '../data'
 import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, fmt, inputCls, mName, tones } from '../ui'
@@ -58,7 +59,7 @@ type PatientRow = {
 const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, phone, user_id, nickname, patient_doctors(active, doctors(full_name))'
 const doctorNames = (p: PatientRow) => p.patient_doctors.filter((x) => x.active).map((x) => x.doctors?.full_name).filter(Boolean).join(', ') || '-'
 const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
-const blank = { full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '' }
+const blank = { full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '', pin: '' }
 
 export function Patients({ openPatient, notify, role }: Ctx) {
   const readOnly = role === 'Caregiver' // cosmetic: the database decides; detail page uses mock data so relatives get no "เปิด"
@@ -91,16 +92,42 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     if (!f.full_name.trim()) return setErr('กรุณาระบุชื่อ-นามสกุล')
     if (age !== null && (!Number.isInteger(age) || age < 0 || age > 130)) return setErr('อายุต้องเป็นจำนวนเต็ม 0-130')
     if (!isThaiMobile(f.phone)) return setErr('กรุณากรอกเบอร์มือถือ 10 หลัก (ใช้เบอร์นี้ให้ผู้ป่วยเข้าแอป)')
+    if (role === 'Admin' && !/^\d{6}$/.test(f.pin)) return setErr('กรุณากำหนด PIN 6 หลักให้ผู้ป่วยเข้าสู่ระบบ')
     setBusy(true)
     setErr('')
-    const { error } = await supabase.rpc('add_patient', {
-      p_full_name: f.full_name, p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: normalizePhoneDigits(f.phone),
+    const phone = normalizePhoneDigits(f.phone)
+    const { data: pid, error } = await supabase.rpc('add_patient', {
+      p_full_name: f.full_name, p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: phone,
     })
+    if (error) {
+      setBusy(false)
+      return setErr('บันทึกไม่สำเร็จ: ' + error.message)
+    }
+    // Admin also creates the patient's login (phone + PIN) and links it; create-user needs Admin, so doctors skip this
+    if (role === 'Admin') {
+      const acc = await supabase.functions.invoke('create-user', { body: { username: phone, full_name: f.full_name.trim(), pin: f.pin, role: 'patient', patient_id: pid } })
+      if (acc.error) {
+        const body = acc.error instanceof FunctionsHttpError ? await acc.error.context.json().catch(() => null) : null
+        setBusy(false)
+        load()
+        return setErr('เพิ่มผู้ป่วยแล้ว แต่สร้างบัญชีไม่สำเร็จ: ' + (body?.error ?? acc.error.message))
+      }
+    }
     setBusy(false)
-    if (error) return setErr('บันทึกไม่สำเร็จ: ' + error.message)
     setForm(false)
     setF(blank)
-    notify('เพิ่มผู้ป่วยแล้ว')
+    notify(role === 'Admin' ? 'เพิ่มผู้ป่วยและสร้างบัญชีแล้ว' : 'เพิ่มผู้ป่วยแล้ว')
+    load()
+  }
+
+  // cascades to plans, schedules, adherence logs, appointments and links, so the confirm spells that out
+  const remove = async (p: PatientRow) => {
+    if (!window.confirm(`ลบผู้ป่วย "${p.full_name}" ถาวร?\nแผนยา ประวัติการทานยา นัดหมาย และการผูกญาติ/ผู้ดูแลของผู้ป่วยรายนี้จะถูกลบทั้งหมด กู้คืนไม่ได้`)) return
+    // select() so a delete that RLS silently filtered out (0 rows) is reported, not shown as success
+    const { data, error } = await supabase.from('patients').delete().eq('id', p.id).select('id')
+    if (error) return notify('ลบผู้ป่วยไม่สำเร็จ: ' + error.message)
+    if (!data?.length) return notify('ลบผู้ป่วยไม่สำเร็จ: ไม่มีสิทธิ์')
+    notify('ลบผู้ป่วยแล้ว')
     load()
   }
 
@@ -122,13 +149,18 @@ export function Patients({ openPatient, notify, role }: Ctx) {
           {!readOnly && <div className="sm:ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มผู้ป่วย</Btn></div>}
         </div>
         <Table
-          head={['ชื่อ-นามสกุล', 'อายุ/เพศ', 'โรคประจำตัว', 'แพ้ยา', 'แพทย์', 'แผนยา', 'เชื่อมแอป', '']}
+          head={['ชื่อ-นามสกุล', 'อายุ/เพศ', 'โรคประจำตัว', 'แพ้ยา', 'ผู้ดูแลภาพรวม', 'แผนยา', 'เชื่อมแอป', '']}
           rows={shown.map((p) => [
             <b>{p.full_name}</b>, `${p.age ?? '-'} / ${p.gender ?? '-'}`, p.conditions ?? '-',
             p.drug_allergies ? <span className="font-medium text-red-700">{p.drug_allergies}</span> : <span className="text-slate-400">ไม่ระบุ</span>,
             doctorNames(p), <Badge tone={withPlan.has(p.id) ? 'green' : 'gray'}>{withPlan.has(p.id) ? 'มีแผนยา' : 'ไม่มีแผนยา'}</Badge>,
             <div><Badge tone={p.user_id ? 'green' : 'gray'}>{p.user_id ? 'เชื่อมแล้ว' : 'ยังไม่เชื่อม'}</Badge>{dupIds.has(p.id) && <div className="mt-1 text-xs text-amber-700">{DUP_PHONE}</div>}</div>,
-            readOnly ? '' : <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>,
+            readOnly ? '' : (
+              <div className="flex gap-2">
+                <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>
+                {role === 'Admin' && <Btn kind="danger" onClick={() => remove(p)}>ลบ</Btn>}{/* cosmetic: patients_w decides */}
+              </div>
+            ),
           ])}
         />
       </Card>
@@ -150,7 +182,12 @@ export function Patients({ openPatient, notify, role }: Ctx) {
             </div>
             <Field label="โรคประจำตัว"><input className={inputCls} value={f.conditions} onChange={(e) => setF({ ...f, conditions: e.target.value })} /></Field>
             <Field label="ประวัติแพ้ยา"><input className={inputCls} value={f.drug_allergies} onChange={(e) => setF({ ...f, drug_allergies: e.target.value })} /></Field>
-            <p className="text-sm text-slate-500">ผู้ป่วยที่เพิ่มโดยแพทย์จะอยู่ในความดูแลของแพทย์คนนั้นโดยอัตโนมัติ</p>
+            {role === 'Admin' && (
+              <Field label="PIN 6 หลัก (สร้างบัญชีให้ผู้ป่วย ใช้เบอร์โทรเป็นชื่อผู้ใช้) *">
+                <input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} />
+              </Field>
+            )}
+            <p className="text-sm text-slate-500">ผู้ป่วยที่เพิ่มโดยผู้ดูแลภาพรวมจะอยู่ในความดูแลของผู้ดูแลภาพรวมคนนั้นโดยอัตโนมัติ</p>
             {err && <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{err}</div>}
             <div className="flex justify-end"><Btn>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</Btn></div>
           </form>
@@ -174,7 +211,7 @@ export function PatientDetail({ id, back, plans, appts, followUps, setFollowUps,
 
   const info: [string, ReactNode][] = [
     ['อายุ / เพศ', `${p.age ?? '-'} ปี / ${p.gender ?? '-'}`], ['โรคประจำตัว', p.conditions ?? '-'],
-    ['เบอร์โทร', p.phone ?? '-'], ['แพทย์ผู้ดูแล', doctorNames(p)],
+    ['เบอร์โทร', p.phone ?? '-'], ['ผู้ดูแลภาพรวม', doctorNames(p)],
   ]
   const next = appts.find((a) => a.patient === id && a.status === 'รอนัด')
   return (

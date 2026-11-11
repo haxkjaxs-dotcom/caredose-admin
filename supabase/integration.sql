@@ -412,3 +412,82 @@ begin
     alter publication supabase_realtime add table notifications;
   end if;
 end $$;
+
+-- 10) medicines: med_w was FOR ALL to admin or doctor, so a doctor could delete a medicine over REST.
+--     Now doctors still insert and edit; only admin deletes (a medicine used by a plan is refused by the FK anyway).
+drop policy if exists med_w on medicines;
+drop policy if exists med_i on medicines;
+drop policy if exists med_u on medicines;
+drop policy if exists med_d on medicines;
+create policy med_i on medicines for insert to authenticated with check (has_role('admin') or has_role('doctor'));
+create policy med_u on medicines for update to authenticated
+  using (has_role('admin') or has_role('doctor')) with check (has_role('admin') or has_role('doctor'));
+create policy med_d on medicines for delete to authenticated using (has_role('admin'));
+
+-- 11) Admin deletes a user account. Deleting auth.users cascades profile + roles. The account's own doctors / caregivers
+--     row goes with it (else an orphan card with user_id null stays in the lists); patient assignments / links to that row
+--     cascade, appointments keep their row with doctor_id null. Patients and logs keep their rows (user_id set null).
+--     Never your own account, so the app cannot be left without an admin. Only admin (a doctor cannot delete accounts).
+create or replace function delete_user(p_user_id uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or not is_active_user() or not has_role('admin') then
+    raise exception 'ไม่มีสิทธิ์ลบบัญชี' using errcode = '42501';
+  end if;
+  if p_user_id = auth.uid() then
+    raise exception 'ลบบัญชีของตัวเองไม่ได้' using errcode = '22023';
+  end if;
+  delete from doctors where user_id = p_user_id;
+  delete from caregivers where user_id = p_user_id;
+  delete from auth.users where id = p_user_id;
+  if not found then
+    raise exception 'ไม่พบบัญชี' using errcode = '22023';
+  end if;
+  insert into audit_logs (actor, action, table_name, row_id, old_value)
+    values (auth.uid(), 'delete_user', 'auth.users', p_user_id::text, null);
+end
+$$;
+revoke execute on function delete_user(uuid) from public, anon;
+grant execute on function delete_user(uuid) to authenticated;
+
+-- 12) Who may change accounts on the Users page. schema.sql let any admin do anything (roles_w FOR ALL, profiles_u), including
+--     giving themselves a role. Now:
+--      * Admin changes any account's role and enabled/disabled status and may delete accounts, but never their OWN
+--        (no self-granting, no self-lock-out: one admin always remains);
+--      * ผู้ดูแลภาพรวม (an active doctor) sees the account list and may change role (caregiver / patient only) and enabled status
+--        of NON-staff accounts. Admin / doctor accounts, and their own, are read-only to them. They cannot delete accounts
+--        (delete_user stays admin only) and cannot grant admin / doctor;
+--      * a doctor may also create the caregivers row for an account they just made a caregiver.
+--     Roles are never updated in place (the app inserts the new role, then deletes the others).
+create or replace function is_staff_user(uid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from user_roles where user_id = uid and role in ('admin', 'doctor'))
+$$;
+revoke execute on function is_staff_user(uuid) from public, anon;
+grant execute on function is_staff_user(uuid) to authenticated;
+
+drop policy if exists profiles_r on profiles;
+create policy profiles_r on profiles for select to authenticated
+  using (id = auth.uid() or has_role('admin') or (has_role('doctor') and is_active_user()));
+drop policy if exists roles_r on user_roles;
+create policy roles_r on user_roles for select to authenticated
+  using (user_id = auth.uid() or has_role('admin') or (has_role('doctor') and is_active_user()));
+
+drop policy if exists roles_w on user_roles;
+drop policy if exists roles_i on user_roles;
+drop policy if exists roles_d on user_roles;
+create policy roles_i on user_roles for insert to authenticated with check (
+  user_id <> auth.uid() and (has_role('admin')
+    or (has_role('doctor') and is_active_user() and role in ('caregiver', 'patient') and not is_staff_user(user_id))));
+create policy roles_d on user_roles for delete to authenticated using (
+  user_id <> auth.uid() and (has_role('admin') or (has_role('doctor') and is_active_user() and not is_staff_user(user_id))));
+
+drop policy if exists profiles_u on profiles;
+create policy profiles_u on profiles for update to authenticated
+  using (id <> auth.uid() and (has_role('admin') or (has_role('doctor') and is_active_user() and not is_staff_user(id))))
+  with check (id <> auth.uid() and (has_role('admin') or (has_role('doctor') and is_active_user() and not is_staff_user(id))));
+
+drop policy if exists cg_i_doctor on caregivers;
+create policy cg_i_doctor on caregivers for insert to authenticated
+  with check (has_role('doctor') and is_active_user() and user_id is not null and not is_staff_user(user_id));

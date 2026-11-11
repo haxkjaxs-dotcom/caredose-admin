@@ -24,9 +24,9 @@ const NAV: Nav[] = [
   { id: 'logs', label: 'ประวัติการทานยา' },
   { id: 'appts', label: 'นัดหมาย' },
   { id: 'meds', label: 'คลังยา' },
-  { id: 'doctors', label: 'แพทย์' },
+  { id: 'doctors', label: 'ผู้ดูแลภาพรวม' },
   { id: 'carers', label: 'ญาติและผู้ดูแล' },
-  { id: 'users', label: 'ผู้ใช้และสิทธิ์', admin: true },
+  { id: 'users', label: 'ผู้ใช้และสิทธิ์' }, // Doctor sees it too, but may only edit caregiver / patient accounts
 ]
 
 const signOut = () => supabase.auth.signOut()
@@ -61,7 +61,7 @@ export default function App() {
   if (role === 'none' || !role) {
     return (
       <Centered>
-        <p>บัญชีนี้ไม่มีสิทธิ์เข้าหลังบ้าน (ต้องเป็น Admin แพทย์ หรือญาติผู้ดูแล)</p>
+        <p>บัญชีนี้ไม่มีสิทธิ์เข้าหลังบ้าน (ต้องเป็น Admin ผู้ดูแลภาพรวม หรือญาติผู้ดูแล)</p>
         <button className="min-h-11 rounded-xl border border-slate-300 px-4" onClick={signOut}>ออกจากระบบ</button>
       </Centered>
     )
@@ -86,7 +86,7 @@ function Shell({ role }: { role: Role }) {
   const allowed = navIdsFor(role, NAV)
   const nav = NAV.filter((n) => allowed.includes(n.id))
   const cur = allowed.includes(page) ? page : defaultPageFor(role) // a page outside the role's menu is never rendered
-  const roleLabel = role === 'Admin' ? 'ผู้ดูแลระบบ' : role === 'Caregiver' ? 'ญาติผู้ดูแล (ดูอย่างเดียว)' : 'แพทย์'
+  const roleLabel = role === 'Admin' ? 'ผู้ดูแลระบบ' : role === 'Caregiver' ? 'ญาติผู้ดูแล (ดูอย่างเดียว)' : 'ผู้ดูแลภาพรวม'
   const ctx = {
     patients: myPatients, ids, plans, setPlans, appts: appts.filter((a) => ids.has(a.patient)),
     setAppts: (next: Appt[]) => setAppts([...appts.filter((a) => !ids.has(a.patient)), ...next]),
@@ -130,7 +130,7 @@ function Shell({ role }: { role: Role }) {
           {cur === 'meds' && <Meds {...ctx} />}
           {cur === 'doctors' && <Doctors {...ctx} />}
           {cur === 'carers' && <Carers {...ctx} />}
-          {cur === 'users' && <Users />}
+          {cur === 'users' && <Users role={role} />}
         </div>
       </main>
       {toast && <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-brand-900 px-5 py-3 text-white shadow-lg">{toast}</div>}

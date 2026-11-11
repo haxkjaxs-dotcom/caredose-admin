@@ -24,7 +24,7 @@ export function Appts({ patients, appts, setAppts, notify, ids, openPatient }: C
           <div className="ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มนัดหมาย</Btn></div>
         </div>
         <Table
-          head={['ผู้ป่วย', 'แพทย์', 'วันที่และเวลา', 'สถานที่', 'เหตุผล', 'สถานะ', 'จัดการ']}
+          head={['ผู้ป่วย', 'ผู้ดูแลภาพรวม', 'วันที่และเวลา', 'สถานที่', 'เหตุผล', 'สถานะ', 'จัดการ']}
           rows={all.filter((a) => !st || a.status === st).sort((a, b) => a.at.localeCompare(b.at)).map((a) => [
             <button className="font-semibold text-brand-700 hover:underline" onClick={() => openPatient(a.patient)}>{pName(a.patient)}</button>,
             dName(a.doctor), fmt(a.at), a.place, a.reason, <Badge tone={apTone[a.status]}>{a.status}</Badge>,
@@ -47,7 +47,7 @@ export function Appts({ patients, appts, setAppts, notify, ids, openPatient }: C
                 </ul>
               )}
             </div>
-            <Field label="แพทย์"><select className={inputCls} value={f.doctor} onChange={(e) => setF({ ...f, doctor: e.target.value })}>{D.doctors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
+            <Field label="ผู้ดูแลภาพรวม"><select className={inputCls} value={f.doctor} onChange={(e) => setF({ ...f, doctor: e.target.value })}>{D.doctors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
             <Field label="วันที่และเวลา"><input type="datetime-local" className={inputCls} value={f.at} onChange={(e) => setF({ ...f, at: e.target.value })} /></Field>
             <Field label="สถานที่"><input className={inputCls} value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} /></Field>
             <Field label="เหตุผลในการนัด"><input className={inputCls} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} /></Field>
