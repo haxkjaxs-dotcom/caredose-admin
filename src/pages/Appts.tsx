@@ -1,37 +1,83 @@
-import { useState } from 'react'
-import * as D from '../data'
-import type { Appt } from '../data'
-import { Badge, Btn, Card, Field, Modal, Select, Table, apTone, dName, fmt, inputCls, pName } from '../ui'
+import { useEffect, useState } from 'react'
+import { supabase } from '../supabase'
+import type { Tone } from '../data'
+import { Badge, Btn, Card, Field, Modal, Select, Table, fmt, inputCls } from '../ui'
 import type { Ctx } from '../ctx'
 
-export function Appts({ patients, appts, setAppts, notify, ids, openPatient }: Ctx) {
-  const all = appts
-  const [form, setForm] = useState(false); const [st, setSt] = useState('')
-  const [q, setQ] = useState(''); const [pid, setPid] = useState('')
-  const [f, setF] = useState({ doctor: 'd1', at: '2025-06-20T09:00', place: '', reason: '', note: '' })
-  const sugg = q && !pid ? patients.filter((p) => p.name.includes(q)) : []
-  const set = (id: string, status: Appt['status']) => { setAppts(appts.map((a) => (a.id === id ? { ...a, status } : a))); notify(`อัปเดตสถานะเป็น "${status}"`) }
-  const save = () => {
-    if (!pid) return notify('กรุณาเลือกผู้ป่วยจากรายการ')
-    setAppts([...appts, { id: 'a' + Date.now(), patient: pid, status: 'รอนัด', ...f }]); setForm(false); setQ(''); setPid(''); notify('สร้างนัดหมายแล้ว จะแจ้งเตือนล่วงหน้า 1 วัน')
+// database status -> label shown on screen
+const LABEL: Record<string, string> = { pending: 'รอนัด', done: 'มาตามนัด', postponed: 'เลื่อนนัด', cancelled: 'ยกเลิก' }
+const TONE: Record<string, Tone> = { pending: 'yellow', done: 'green', postponed: 'gray', cancelled: 'red' }
+type Row = { id: string; patient_id: string; appointment_at: string; place: string | null; reason: string | null; status: string; patients: { full_name: string } | null; doctors: { full_name: string } | null }
+type Opt = { id: string; full_name: string }
+const blank = { doctor: '', at: '', place: '', reason: '' }
+
+export function Appts({ notify, openPatient }: Ctx) {
+  const [rows, setRows] = useState<Row[]>([])
+  const [pats, setPats] = useState<Opt[]>([])
+  const [docs, setDocs] = useState<Opt[]>([])
+  const [form, setForm] = useState(false)
+  const [st, setSt] = useState('')
+  const [q, setQ] = useState('')
+  const [pid, setPid] = useState('')
+  const [f, setF] = useState(blank)
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    const [a, p, d] = await Promise.all([
+      supabase.from('appointments').select('id, patient_id, appointment_at, place, reason, status, patients(full_name), doctors(full_name)').order('appointment_at'),
+      supabase.from('patients').select('id, full_name').order('full_name'),
+      supabase.from('doctors').select('id, full_name').eq('is_active', true).order('full_name'),
+    ])
+    const bad = a.error ?? p.error ?? d.error
+    if (bad) return notify('โหลดนัดหมายไม่สำเร็จ: ' + bad.message)
+    setRows((a.data ?? []) as unknown as Row[])
+    setPats(p.data ?? [])
+    setDocs(d.data ?? [])
   }
-  void ids
+  useEffect(() => { load() }, [])
+
+  const sugg = q && !pid ? pats.filter((p) => p.full_name.includes(q)) : []
+
+  // select() so an update that RLS silently filtered out (0 rows) is reported, not shown as success
+  const set = async (id: string, status: string) => {
+    const { data, error } = await supabase.from('appointments').update({ status }).eq('id', id).select('id')
+    if (error) return notify('อัปเดตไม่สำเร็จ: ' + error.message)
+    if (!data?.length) return notify('อัปเดตไม่สำเร็จ: ไม่มีสิทธิ์')
+    notify(`อัปเดตสถานะเป็น "${LABEL[status]}"`)
+    load()
+  }
+
+  const save = async () => {
+    if (busy) return
+    if (!pid) return notify('กรุณาเลือกผู้ป่วยจากรายการ')
+    if (!f.at) return notify('กรุณาระบุวันที่และเวลา')
+    setBusy(true)
+    const { error } = await supabase.from('appointments').insert({
+      patient_id: pid, doctor_id: f.doctor || null, appointment_at: new Date(f.at).toISOString(), place: f.place.trim() || null, reason: f.reason.trim() || null,
+    })
+    setBusy(false)
+    if (error) return notify('สร้างนัดหมายไม่สำเร็จ: ' + error.message)
+    setForm(false); setQ(''); setPid(''); setF(blank)
+    notify('สร้างนัดหมายแล้ว')
+    load()
+  }
+
   return (
     <>
       <Card>
         <div className="mb-4 flex gap-3">
-          <Select v={st} set={setSt} all="ทุกสถานะ" opts={['รอนัด', 'มาตามนัด', 'เลื่อนนัด', 'ยกเลิก'].map((s) => [s, s])} />
+          <Select v={st} set={setSt} all="ทุกสถานะ" opts={Object.entries(LABEL).map(([k, l]) => [k, l])} />
           <div className="ml-auto"><Btn onClick={() => setForm(true)}>เพิ่มนัดหมาย</Btn></div>
         </div>
         <Table
           head={['ผู้ป่วย', 'ผู้ดูแลภาพรวม', 'วันที่และเวลา', 'สถานที่', 'เหตุผล', 'สถานะ', 'จัดการ']}
-          rows={all.filter((a) => !st || a.status === st).sort((a, b) => a.at.localeCompare(b.at)).map((a) => [
-            <button className="font-semibold text-brand-700 hover:underline" onClick={() => openPatient(a.patient)}>{pName(a.patient)}</button>,
-            dName(a.doctor), fmt(a.at), a.place, a.reason, <Badge tone={apTone[a.status]}>{a.status}</Badge>,
+          rows={rows.filter((a) => !st || a.status === st).map((a) => [
+            <button className="font-semibold text-brand-700 hover:underline" onClick={() => openPatient(a.patient_id)}>{a.patients?.full_name ?? '-'}</button>,
+            a.doctors?.full_name ?? '-', fmt(a.appointment_at), a.place ?? '-', a.reason ?? '-', <Badge tone={TONE[a.status]}>{LABEL[a.status]}</Badge>,
             <div className="flex flex-wrap gap-2">
-              <Btn kind="ghost" onClick={() => openPatient(a.patient)}>ดูประวัติการทานยา</Btn>
-              <Btn kind="ghost" onClick={() => set(a.id, 'เลื่อนนัด')}>เลื่อน</Btn>
-              <Btn kind="danger" onClick={() => set(a.id, 'ยกเลิก')}>ยกเลิก</Btn>
+              <Btn kind="ghost" onClick={() => openPatient(a.patient_id)}>ดูประวัติการทานยา</Btn>
+              <Btn kind="ghost" onClick={() => set(a.id, 'postponed')}>เลื่อน</Btn>
+              <Btn kind="danger" onClick={() => set(a.id, 'cancelled')}>ยกเลิก</Btn>
             </div>,
           ])}
         />
@@ -40,19 +86,20 @@ export function Appts({ patients, appts, setAppts, notify, ids, openPatient }: C
         <Modal title="เพิ่มนัดหมาย" onClose={() => setForm(false)}>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="relative sm:col-span-2">
-              <Field label="ผู้ป่วย (พิมพ์เพื่อค้นหา)"><input className={inputCls} value={q} onChange={(e) => { setQ(e.target.value); setPid('') }} /></Field>
+              <Field label="ผู้ป่วย (พิมพ์ชื่อเพื่อค้นหา)"><input className={inputCls} value={q} autoFocus onChange={(e) => { setQ(e.target.value); setPid('') }} /></Field>
               {sugg.length > 0 && (
                 <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-                  {sugg.map((p) => <li key={p.id}><button className="min-h-11 w-full px-3 text-left hover:bg-brand-50" onClick={() => { setPid(p.id); setQ(p.name) }}>{p.name}</button></li>)}
+                  {sugg.map((p) => <li key={p.id}><button className="min-h-11 w-full px-3 text-left hover:bg-brand-50" onClick={() => { setPid(p.id); setQ(p.full_name) }}>{p.full_name}</button></li>)}
                 </ul>
               )}
+              {q && !pid && !sugg.length && <div className="mt-1 text-sm text-slate-500">ไม่พบผู้ป่วยชื่อนี้</div>}
             </div>
-            <Field label="ผู้ดูแลภาพรวม"><select className={inputCls} value={f.doctor} onChange={(e) => setF({ ...f, doctor: e.target.value })}>{D.doctors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
-            <Field label="วันที่และเวลา"><input type="datetime-local" className={inputCls} value={f.at} onChange={(e) => setF({ ...f, at: e.target.value })} /></Field>
+            <Field label="ผู้ดูแลภาพรวม"><select className={inputCls} value={f.doctor} onChange={(e) => setF({ ...f, doctor: e.target.value })}><option value="">- ไม่ระบุ -</option>{docs.map((d) => <option key={d.id} value={d.id}>{d.full_name}</option>)}</select></Field>
+            <Field label="วันที่และเวลา *"><input type="datetime-local" className={inputCls} value={f.at} onChange={(e) => setF({ ...f, at: e.target.value })} /></Field>
             <Field label="สถานที่"><input className={inputCls} value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} /></Field>
             <Field label="เหตุผลในการนัด"><input className={inputCls} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} /></Field>
           </div>
-          <div className="mt-6 flex justify-end"><Btn onClick={save}>บันทึก</Btn></div>
+          <div className="mt-6 flex justify-end"><Btn onClick={save}>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</Btn></div>
         </Modal>
       )}
     </>

@@ -61,7 +61,9 @@ export function Carers({ notify, role }: Ctx) {
         setBusy(false)
         return setErr('สร้างบัญชีไม่สำเร็จ: ' + (body?.error ?? acc.error.message))
       }
-      r = await supabase.from('caregivers').select('id').eq('user_id', acc.data.id).single()
+      r = await supabase.from('caregivers').select('id').eq('user_id', acc.data.id).maybeSingle()
+      // an older deployed create-user does not make the caregivers row: make it here so the list always gets it
+      if (!r.error && !r.data) r = await supabase.from('caregivers').insert({ user_id: acc.data.id, ...row }).select('id').single()
     } else {
       r = await supabase.from('caregivers').update(row).eq('id', form!).select('id').single()
     }

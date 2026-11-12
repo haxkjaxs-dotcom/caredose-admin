@@ -1,17 +1,15 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
-import type { Tone, Plan } from '../data'
-import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, fmt, inputCls, mName, tones } from '../ui'
+import type { Tone } from '../data'
+import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, fmt, inputCls, tones } from '../ui'
 import type { Ctx, FollowUp, Role } from '../ctx'
-import { isThaiMobile, normalizePhoneDigits, samePhoneGroups } from '../lib/plans'
+import { isThaiMobile, normalizePhoneDigits, samePhoneGroups, planRowToView, type PlanRow, type PlanView } from '../lib/plans'
 import { SendNotice } from './SendNotice'
 
 export type DoseStatus = 'ทานแล้ว' | 'เลท' | 'พลาดยา' | 'ยังไม่ได้บันทึก' | 'รอ sync' | 'ยังไม่ถึงกำหนด'
 export type DoseItem = { id: string; date: string; med: string; scheduled: string; recorded: string; status: DoseStatus }
 
-const DEMO_NOW = new Date('2025-06-12T14:30:00')
-const timeByMeal: Record<string, string> = { เช้า: '08:00', กลางวัน: '12:00', เย็น: '18:00', ก่อนนอน: '21:00' }
 const doseTone: Record<DoseStatus, Tone> = {
   ทานแล้ว: 'green', เลท: 'yellow', พลาดยา: 'red', ยังไม่ได้บันทึก: 'gray', 'รอ sync': 'yellow', ยังไม่ถึงกำหนด: 'gray',
 }
@@ -27,28 +25,14 @@ const addDays = (d: Date, amount: number) => {
   return next
 }
 const thaiDate = (d: Date) => d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
-const buildDoseItems = (patient: string, plans: Plan[], start: Date, end: Date): DoseItem[] => {
-  const items: DoseItem[] = []
-  for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
-    const dayKey = dateKey(day)
-    plans.filter((plan) => plan.patient === patient && plan.start <= dayKey && plan.end >= dayKey).forEach((plan) => {
-      plan.times.forEach((meal, index) => {
-        const scheduledTime = timeByMeal[meal] ?? '08:00'
-        const scheduledAt = new Date(`${dayKey}T${scheduledTime}:00`)
-        const seed = day.getDate() + plan.med.charCodeAt(plan.med.length - 1) + index
-        let status: DoseStatus
-        if (scheduledAt > DEMO_NOW) status = 'ยังไม่ถึงกำหนด'
-        else if (seed % 13 === 0) status = 'รอ sync'
-        else if (seed % 11 === 0) status = 'พลาดยา'
-        else if (seed % 7 === 0) status = 'ยังไม่ได้บันทึก'
-        else if (seed % 5 === 0) status = 'เลท'
-        else status = 'ทานแล้ว'
-        const recorded = status === 'ทานแล้ว' ? scheduledTime.replace(':00', ':05') : status === 'เลท' ? scheduledTime.replace(':00', ':35') : '-'
-        items.push({ id: `${dayKey}-${plan.id}-${meal}`, date: dayKey, med: plan.med, scheduled: `${scheduledTime} (${meal})`, recorded, status })
-      })
-    })
-  }
-  return items
+const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+type LogRow = { scheduled_at: string; status: 'pending' | 'taken' | 'skipped' | 'missed'; taken_at: string | null; is_late: boolean; medication_plans: { medicines: { generic_name: string; trade_name: string | null } | null } | null }
+// a real medication_logs row -> what the calendar shows
+const toDoseItem = (r: LogRow, i: number): DoseItem => {
+  const at = new Date(r.scheduled_at)
+  const status: DoseStatus = r.status === 'taken' ? (r.is_late ? 'เลท' : 'ทานแล้ว') : r.status === 'pending' ? (at > new Date() ? 'ยังไม่ถึงกำหนด' : 'ยังไม่ได้บันทึก') : 'พลาดยา'
+  const m = r.medication_plans?.medicines
+  return { id: `${r.scheduled_at}-${i}`, date: dateKey(at), med: m?.trade_name || m?.generic_name || '-', scheduled: hhmm(at), recorded: r.taken_at ? hhmm(new Date(r.taken_at)) : '-', status }
 }
 
 type PatientRow = {
@@ -73,17 +57,25 @@ export function Patients({ openPatient, notify, role }: Ctx) {
   const [busy, setBusy] = useState(false)
 
   // RLS decides the list: a doctor gets only the patients assigned to them, Admin gets all.
-  const load = async () => {
+  const load = async (quiet = false) => {
     const [p, pl] = await Promise.all([
       supabase.from('patients').select(PATIENT_COLS).order('full_name'),
       supabase.from('medication_plans').select('patient_id').eq('status', 'active'),
     ])
     const bad = p.error ?? pl.error
-    if (bad) return notify('โหลดผู้ป่วยไม่สำเร็จ: ' + bad.message)
+    if (bad) return quiet ? undefined : notify('โหลดผู้ป่วยไม่สำเร็จ: ' + bad.message)
     setRows((p.data ?? []) as unknown as PatientRow[])
     setWithPlan(new Set((pl.data ?? []).map((x) => x.patient_id as string)))
   }
-  useEffect(() => { load() }, [])
+  // Patients fill in their own profile (conditions, age) from the app: refresh so Admin sees it without reloading.
+  // shortcut: polling every 15 s, switch to Realtime on patients if this list gets large.
+  useEffect(() => {
+    load()
+    const refresh = () => { if (!document.hidden) load(true) }
+    const t = setInterval(refresh, 15000)
+    window.addEventListener('focus', refresh)
+    return () => { clearInterval(t); window.removeEventListener('focus', refresh) }
+  }, [])
 
   const add = async (e: FormEvent) => {
     e.preventDefault()
@@ -197,14 +189,22 @@ export function Patients({ openPatient, notify, role }: Ctx) {
   )
 }
 
-export function PatientDetail({ id, back, plans, appts, followUps, setFollowUps, notify, role }: Ctx & { id: string; back: () => void }) {
+export function PatientDetail({ id, back, followUps, setFollowUps, notify, role }: Ctx & { id: string; back: () => void }) {
   const [p, setP] = useState<PatientRow | null | undefined>(undefined)
+  const [plans, setPlans] = useState<PlanView[]>([])
+  const [next, setNext] = useState<{ appointment_at: string; place: string | null; reason: string | null } | null>(null)
   const [sending, setSending] = useState(false)
   useEffect(() => {
     supabase.from('patients').select(PATIENT_COLS).eq('id', id).maybeSingle().then(({ data, error }) => {
       if (error) notify('โหลดข้อมูลผู้ป่วยไม่สำเร็จ: ' + error.message)
       setP((data as unknown as PatientRow | null) ?? null)
     })
+    supabase.from('medication_plans')
+      .select('id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, medicines(generic_name, trade_name), medication_schedules(time_of_day, days_of_week, interval_days)')
+      .eq('patient_id', id).eq('status', 'active').order('start_date', { ascending: false })
+      .then(({ data }) => setPlans(((data ?? []) as unknown as PlanRow[]).map(planRowToView)))
+    supabase.from('appointments').select('appointment_at, place, reason').eq('patient_id', id).eq('status', 'pending').gte('appointment_at', new Date().toISOString())
+      .order('appointment_at').limit(1).then(({ data }) => setNext(data?.[0] ?? null))
   }, [id])
   if (p === undefined) return <div className="text-slate-400">กำลังโหลด...</div>
   if (p === null) return <div className="space-y-4"><Btn kind="ghost" onClick={back}>กลับ</Btn><div className="text-slate-500">ไม่พบข้อมูลผู้ป่วย หรือไม่มีสิทธิ์เข้าถึง</div></div>
@@ -213,7 +213,6 @@ export function PatientDetail({ id, back, plans, appts, followUps, setFollowUps,
     ['อายุ / เพศ', `${p.age ?? '-'} ปี / ${p.gender ?? '-'}`], ['โรคประจำตัว', p.conditions ?? '-'],
     ['เบอร์โทร', p.phone ?? '-'], ['ผู้ดูแลภาพรวม', doctorNames(p)],
   ]
-  const next = appts.find((a) => a.patient === id && a.status === 'รอนัด')
   return (
     <>
       <div className="flex items-center gap-3">
@@ -234,29 +233,29 @@ export function PatientDetail({ id, back, plans, appts, followUps, setFollowUps,
         </Card>
         <Card>
           <H>นัดหมายครั้งถัดไป</H>
-          {next ? <div><div className="font-semibold">{fmt(next.at)}</div><div className="text-slate-500">{next.place} · {next.reason}</div></div> : <div className="text-slate-400">ไม่มีนัดหมาย</div>}
+          {next ? <div><div className="font-semibold">{fmt(next.appointment_at)}</div><div className="text-slate-500">{next.place ?? '-'} · {next.reason ?? '-'}</div></div> : <div className="text-slate-400">ไม่มีนัดหมาย</div>}
         </Card>
       </div>
       <Card>
         <H>แผนยาปัจจุบัน</H>
-        <Table head={['ยา', 'ขนาด', 'มื้อ', 'คำแนะนำ', 'ช่วงเวลา']} rows={plans.filter((r) => r.patient === id).map((r) => [mName(r.med), r.dose, r.times.join(', '), r.advice, `${r.start} – ${r.end}`])} />
+        <Table head={['ยา', 'ขนาด', 'เวลา', 'คำแนะนำ', 'ช่วงเวลา']} rows={plans.map((r) => [r.name, r.dose, r.times.join(', ') || '-', r.meal || '-', r.range])} />
       </Card>
-      <MedicationAdherence patient={id} plans={plans} followUps={followUps} setFollowUps={setFollowUps} notify={notify} role={role} />
+      <MedicationAdherence patient={id} followUps={followUps} setFollowUps={setFollowUps} notify={notify} role={role} />
     </>
   )
 }
 
 export function MedicationAdherence({
-  patient, plans, followUps, setFollowUps, notify, role,
+  patient, followUps, setFollowUps, notify, role,
 }: {
-  patient: string; plans: Plan[]; followUps: FollowUp[]; setFollowUps: (items: FollowUp[]) => void
+  patient: string; followUps: FollowUp[]; setFollowUps: (items: FollowUp[]) => void
   notify: (message: string) => void; role: Role
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [offset, setOffset] = useState(0)
-  const [selected, setSelected] = useState('2025-06-12')
+  const [selected, setSelected] = useState(dateKey(new Date()))
   const [note, setNote] = useState('')
-  const anchor = new Date('2025-06-12T12:00:00')
+  const anchor = new Date()
   let start: Date
   let end: Date
   if (view === 'week') {
@@ -271,7 +270,24 @@ export function MedicationAdherence({
   }
   const days: Date[] = []
   for (let day = new Date(start); day <= end; day = addDays(day, 1)) days.push(day)
-  const items = buildDoseItems(patient, plans, start, end)
+  const [items, setItems] = useState<DoseItem[]>([])
+  const from = dateKey(start)
+  const to = dateKey(end)
+  // real medication_logs of this patient in the shown range; re-read every 15 s so a dose the patient just marked as taken appears
+  useEffect(() => {
+    const read = async () => {
+      const { data, error } = await supabase.from('medication_logs')
+        .select('scheduled_at, status, taken_at, is_late, medication_plans!inner(patient_id, medicines(generic_name, trade_name))')
+        .eq('medication_plans.patient_id', patient)
+        .gte('scheduled_at', new Date(`${from}T00:00:00`).toISOString()).lt('scheduled_at', addDays(new Date(`${to}T00:00:00`), 1).toISOString())
+        .order('scheduled_at')
+      if (error) return notify('โหลดการทานยาไม่สำเร็จ: ' + error.message)
+      setItems(((data ?? []) as unknown as LogRow[]).map(toDoseItem))
+    }
+    read()
+    const t = setInterval(() => { if (!document.hidden) read() }, 15000)
+    return () => clearInterval(t)
+  }, [patient, from, to])
   const due = items.filter((item) => item.status !== 'ยังไม่ถึงกำหนด')
   const taken = due.filter((item) => item.status === 'ทานแล้ว' || item.status === 'เลท').length
   const missed = due.filter((item) => item.status === 'พลาดยา').length
@@ -344,12 +360,11 @@ export function MedicationAdherence({
         {selectedItems.length ? (
           <Table
             head={['ชื่อยา', 'เวลาที่กำหนด', 'เวลาที่บันทึกจริง', 'สถานะ']}
-            rows={selectedItems.map((item) => [mName(item.med), item.scheduled, item.recorded, <Badge tone={doseTone[item.status]}>{item.status}</Badge>])}
+            rows={selectedItems.map((item) => [item.med, item.scheduled, item.recorded, <Badge tone={doseTone[item.status]}>{item.status}</Badge>])}
           />
         ) : (
           <div className="rounded-xl bg-slate-50 p-4 text-slate-600">ไม่มีแผนยาในวันนี้</div>
         )}
-        <div className="mt-3 text-sm text-slate-500">“รอ sync” หมายถึงข้อมูลจากอุปกรณ์ยังส่งมาไม่ครบ ระบบจะไม่สรุปว่าเป็นการพลาดยา</div>
       </div>
       <div className="mt-6 border-t border-slate-200 pt-5">
         <H>บันทึกผลการติดตาม</H>

@@ -117,15 +117,15 @@ export function Users({ role: myRole }: { role: Role }) {
           head={['ชื่อ', 'ชื่อผู้ใช้ / เบอร์', 'สิทธิ์', 'สถานะ', ...(staffTable && isAdmin ? ['การใช้งาน', 'ใช้งานล่าสุด'] : []), '']}
           rows={list.map((u) => [
             <div><b>{u.full_name ?? '-'}</b>{patientOf[u.id] && <div className="text-xs text-slate-500">ผู้ป่วย: {patientOf[u.id]}</div>}</div>, u.phone ?? '-',
-            u.id === me || (staffTable && !isAdmin) ? <Badge tone="gray">{ROLES.find(([k]) => k === u.role)?.[1] ?? 'ไม่มีสิทธิ์'}</Badge> : (
+            u.id === me || !isAdmin ? <Badge tone="gray">{ROLES.find(([k]) => k === u.role)?.[1] ?? 'ไม่มีสิทธิ์'}</Badge> : (
               <select className={inputCls + ' !w-auto'} value={u.role} onChange={(e) => setRole(u, e.target.value)}>
                 {u.role === 'none' && <option value="none" disabled>ไม่มีสิทธิ์</option>}
-                {ROLES.filter(([k]) => isAdmin || k === 'caregiver' || k === 'patient').map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {ROLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             ),
             <Badge tone={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</Badge>,
             ...(staffTable && isAdmin ? [usage[u.id] ? `${usage[u.id].n} ครั้ง` : '-', usage[u.id] ? new Date(usage[u.id].last).toLocaleString('th-TH') : 'ยังไม่มีการใช้งาน'] : []),
-            u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : staffTable && !isAdmin ? <span className="text-sm text-slate-400">แก้ไขไม่ได้</span> : (
+            u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : !isAdmin ? <span className="text-sm text-slate-400">แก้ไขไม่ได้</span> : (
               <div className="flex gap-2">
                 <Btn kind="ghost" onClick={() => toggle(u)}>{u.is_active ? 'ปิดบัญชี' : 'เปิดบัญชี'}</Btn>
                 {isAdmin && <Btn kind="danger" onClick={() => remove(u)}>ลบ</Btn>}

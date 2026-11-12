@@ -6,7 +6,7 @@ import type { Ctx } from '../ctx'
 import { canEditPlans } from '../lib/roles'
 
 type Patient = { id: string; full_name: string }
-type Med = { id: string; generic_name: string; trade_name: string | null; is_active: boolean }
+type Med = { id: string; generic_name: string; trade_name: string | null; is_active: boolean; stock: number }
 
 const today = () => new Date().toLocaleDateString('en-CA')
 const blank = (): Form => ({ id: null, medicineId: '', dose: '', meal: '', start: today(), end: '', note: '', times: ['08:00'], status: 'active', ruleKind: 'daily', days: [], interval: '' })
@@ -33,12 +33,13 @@ export function Plans({ notify, role }: Ctx) {
       if (error) return notify('โหลดรายชื่อผู้ป่วยไม่สำเร็จ: ' + error.message)
       setPatients(data ?? [])
     })
-    if (!canEdit) return // the medicine list is only for the plan form
-    supabase.from('medicines').select('id, generic_name, trade_name, is_active').order('generic_name').then(({ data, error }) => {
+    if (canEdit) loadMeds() // the medicine list is only for the plan form
+  }, [])
+  const loadMeds = () =>
+    supabase.from('medicines').select('id, generic_name, trade_name, is_active, stock').order('generic_name').then(({ data, error }) => {
       if (error) return notify('โหลดคลังยาไม่สำเร็จ: ' + error.message)
       setMeds(data ?? [])
     })
-  }, [])
 
   const load = async (id: string) => {
     setLoadErr('')
@@ -93,15 +94,16 @@ export function Plans({ notify, role }: Ctx) {
             />
           )}
       </Card>
-      {form && <PlanForm init={form} pid={pid} meds={meds} notify={notify} onClose={() => setForm(null)} onSaved={() => { setForm(null); load(pid) }} />}
+      {form && <PlanForm init={form} pid={pid} meds={meds} reloadMeds={loadMeds} notify={notify} onClose={() => setForm(null)} onSaved={() => { setForm(null); load(pid) }} />}
     </>
   )
 }
 
-function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; pid: string; meds: Med[]; notify: (m: string) => void; onClose: () => void; onSaved: () => void }) {
+function PlanForm({ init, pid, meds, reloadMeds, notify, onClose, onSaved }: { init: Form; pid: string; meds: Med[]; reloadMeds: () => void; notify: (m: string) => void; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState(init)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [qty, setQty] = useState('') // dispensed amount of a NEW plan, taken off the medicine stock
   const set = (k: keyof Form) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
   const setTime = (i: number, v: string) => setF({ ...f, times: f.times.map((t, j) => (j === i ? v : t)) })
 
@@ -111,10 +113,27 @@ function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; p
     const times = normalizeTimes(f.times)
     const bad = validatePlanForm({ medicineId: f.medicineId, dose: f.dose, start: f.start, end: f.end, times, ruleKind: f.ruleKind, days: f.days, interval: f.interval })
     if (bad) return setErr(bad)
+    const n = Number(qty)
+    const med = meds.find((m) => m.id === f.medicineId)
+    if (!f.id) {
+      if (!Number.isInteger(n) || n < 1) return setErr('กรุณาระบุจำนวนยาที่จ่าย (จำนวนเต็ม 1 ขึ้นไป)')
+      if (med && n > med.stock) return setErr(`ยาคงเหลือไม่พอ: มี ${med.stock} ต้องการ ${n}`)
+    }
     setBusy(true)
     setErr('')
+    // dispensing: take the amount off the stock FIRST (compare-and-set, so a concurrent change cannot push it below zero), put it back if the plan fails
+    if (!f.id && med) {
+      const cut = await supabase.from('medicines').update({ stock: med.stock - n }).eq('id', med.id).eq('stock', med.stock).select('id')
+      if (cut.error || !cut.data?.length) {
+        setBusy(false)
+        reloadMeds()
+        return setErr(cut.error ? 'หักสต็อกไม่สำเร็จ: ' + cut.error.message : 'สต็อกเพิ่งถูกเปลี่ยนโดยผู้อื่น ตรวจสอบยอดคงเหลือใหม่แล้วลองอีกครั้ง')
+      }
+    }
     const { error } = await savePlan(pid, f, times)
+    if (error && !f.id && med) await supabase.from('medicines').update({ stock: med.stock }).eq('id', med.id).eq('stock', med.stock - n)
     setBusy(false)
+    if (!f.id) reloadMeds()
     if (error) return setErr(error.message)
     notify(f.id ? 'แก้ไขแผนยาแล้ว' : 'เพิ่มแผนยาแล้ว')
     onSaved()
@@ -130,6 +149,7 @@ function PlanForm({ init, pid, meds, notify, onClose, onSaved }: { init: Form; p
               {meds.filter((m) => m.is_active || m.id === init.medicineId).map((m) => <option key={m.id} value={m.id}>{m.trade_name || m.generic_name}{m.is_active ? '' : ' (ปิดใช้งาน)'}</option>)}
             </select>
           </Field>
+          {!f.id && <Field label={`จำนวนยาที่จ่าย * (หักจากสต็อก${meds.find((m) => m.id === f.medicineId) ? ` คงเหลือ ${meds.find((m) => m.id === f.medicineId)!.stock}` : ''})`}><input className={inputCls} type="number" min={1} step={1} value={qty} onChange={(e) => setQty(e.target.value)} /></Field>}
           <Field label="ขนาดยา *"><input className={inputCls} value={f.dose} onChange={set('dose')} placeholder="เช่น 1 เม็ด" maxLength={100} /></Field>
           <Field label="ความสัมพันธ์กับมื้ออาหาร">
             <input className={inputCls} list="meal-options" value={f.meal} onChange={set('meal')} maxLength={50} />
