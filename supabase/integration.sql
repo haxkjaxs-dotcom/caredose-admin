@@ -518,3 +518,42 @@ create policy patients_u_doctor on patients for update to authenticated
                                       where pd.patient_id = patients.id and pd.active and d.user_id = auth.uid()))
   with check (is_active_user() and exists (select 1 from patient_doctors pd join doctors d on d.id = pd.doctor_id
                                            where pd.patient_id = patients.id and pd.active and d.user_id = auth.uid()));
+
+-- 14) Security review 2026-11-12. Both guards are SECURITY INVOKER and act on direct API calls only (see #3), so save_plan and
+--     other security definer functions are unaffected.
+--  a) medication_plans: plan_u let a doctor / managing caregiver move a plan (and with it every adherence log) to another patient,
+--     and created_by was whatever the client sent, so the record could name someone else as its author.
+--     Now a direct insert is stamped with the caller, and only Admin may change patient_id or created_by.
+create or replace function guard_plan_columns() returns trigger
+language plpgsql security invoker set search_path = public as $$
+begin
+  if auth.uid() is not null and current_user in ('authenticated', 'anon') then
+    if tg_op = 'INSERT' then
+      new.created_by := auth.uid();
+    elsif not has_role('admin')
+          and (new.patient_id, new.created_by) is distinct from (old.patient_id, old.created_by) then
+      raise exception 'ย้ายแผนยาไปผู้ป่วยอื่นหรือแก้ผู้สร้างแผนไม่ได้' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists medication_plans_guard on medication_plans;
+create trigger medication_plans_guard before insert or update on medication_plans
+  for each row execute function guard_plan_columns();
+
+--  b) appointments: appt_confirm (the patient's own appointment) had no column limit, so a patient could move the time or change
+--     the doctor, place and reason. Someone who cannot manage the patient's plan may now change only status and note.
+create or replace function guard_appt_columns() returns trigger
+language plpgsql security invoker set search_path = public as $$
+begin
+  if auth.uid() is not null and current_user in ('authenticated', 'anon') and not can_manage_plan(old.patient_id)
+     and (new.patient_id, new.doctor_id, new.appointment_at, new.place, new.department, new.reason)
+         is distinct from (old.patient_id, old.doctor_id, old.appointment_at, old.place, old.department, old.reason) then
+    raise exception 'ผู้ป่วยยืนยันหรือแก้หมายเหตุนัดหมายได้เท่านั้น' using errcode = '42501';
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists appointments_guard on appointments;
+create trigger appointments_guard before update on appointments for each row execute function guard_appt_columns();
