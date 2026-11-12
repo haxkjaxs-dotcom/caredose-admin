@@ -599,3 +599,20 @@ create policy pc_u_doctor on patient_caregivers for update to authenticated
   using (has_role('doctor') and is_active_user()) with check (has_role('doctor') and is_active_user());
 drop policy if exists pc_d_doctor on patient_caregivers;
 create policy pc_d_doctor on patient_caregivers for delete to authenticated using (has_role('doctor') and is_active_user());
+
+-- 16) Security review 2026-11-12. cg_u_doctor (#15) let a doctor change caregivers.user_id, so a relative's row, with every confirmed
+--     patient link and can_manage_plan right on it, could be handed to another account (the relative silently lost access).
+--     Who a record belongs to stays Admin only, as for doctors / patients (#3). A separate trigger, so guard_admin_columns stays
+--     identical in security_fixes.sql and here. SECURITY INVOKER for the same reason as #3; inserts are not affected.
+create or replace function guard_caregiver_owner() returns trigger
+language plpgsql security invoker set search_path = public as $$
+begin
+  if auth.uid() is not null and not has_role('admin') and current_user in ('authenticated', 'anon')
+     and new.user_id is distinct from old.user_id then
+    raise exception 'เฉพาะ Admin เท่านั้นที่เปลี่ยนบัญชีของญาติ/ผู้ดูแลได้' using errcode = '42501';
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists caregivers_guard on caregivers;
+create trigger caregivers_guard before update on caregivers for each row execute function guard_caregiver_owner();
