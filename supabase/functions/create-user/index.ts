@@ -1,4 +1,4 @@
-// Edge Function: an active Admin creates a login (username or phone + 6-digit PIN) and its role.
+// Edge Function: an active Admin (any role) or ผู้ดูแลภาพรวม (caregiver / patient only) creates a login (username or phone + 6-digit PIN) and its role.
 // Needs the service role key, so it cannot run in the browser. SUPABASE_URL and
 // SUPABASE_SERVICE_ROLE_KEY are injected by Supabase automatically.
 import { createClient } from 'npm:@supabase/supabase-js@2'
@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors })
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
-  // The caller must be a signed-in, active Admin.
+  // The caller must be a signed-in, active Admin or doctor.
   const token = req.headers.get('Authorization')?.replace('Bearer ', '') ?? ''
   const { data: { user } } = await admin.auth.getUser(token)
   if (!user) return reply({ error: 'ยังไม่ได้เข้าสู่ระบบ' }, 401)
@@ -23,12 +23,14 @@ Deno.serve(async (req) => {
     admin.from('user_roles').select('role').eq('user_id', user.id),
     admin.from('profiles').select('is_active').eq('id', user.id).maybeSingle(),
   ])
-  if (!prof?.is_active || !roles?.some((r) => r.role === 'admin')) return reply({ error: 'ต้องเป็น Admin เท่านั้น' }, 403)
+  const isAdmin = !!roles?.some((r) => r.role === 'admin')
+  if (!prof?.is_active || !(isAdmin || roles?.some((r) => r.role === 'doctor'))) return reply({ error: 'ไม่มีสิทธิ์สร้างบัญชี' }, 403)
 
   const { username, full_name, pin, role, patient_id } = await req.json().catch(() => ({}))
   if (!/^\w{3,30}$/.test(username ?? '') || !/^\d{6}$/.test(pin ?? '') || !String(full_name ?? '').trim() || !ROLES.includes(role)) {
     return reply({ error: 'ข้อมูลไม่ถูกต้อง (ชื่อผู้ใช้ 3-30 ตัว, PIN 6 หลัก, ต้องมีชื่อและสิทธิ์)' }, 400)
   }
+  if (!isAdmin && role !== 'caregiver' && role !== 'patient') return reply({ error: 'ผู้ดูแลภาพรวมสร้างได้เฉพาะญาติ/ผู้ดูแล และผู้ป่วย' }, 403)
   // optional: link the new patient login to an existing, not yet linked patients row
   if (patient_id != null && (role !== 'patient' || !/^[0-9a-f-]{36}$/i.test(patient_id))) return reply({ error: 'patient_id ไม่ถูกต้อง' }, 400)
   const name = String(full_name).trim().slice(0, 100)

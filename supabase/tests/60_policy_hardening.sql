@@ -94,12 +94,14 @@ begin
       values (gen_random_uuid(), 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'direct', current_date);
     insert into medication_schedules (plan_id, time_of_day) values ('f1100000-0000-0000-0000-000000000011', '10:00');
     assert save_plan(null, 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'sp', null, current_date, null, null, array['06:00'], 'active') is not null, u || ' save_plan';
-    -- they still cannot touch the other patient's plan
-    begin
-      insert into medication_schedules (plan_id, time_of_day) values ('f2000000-0000-0000-0000-000000000002', '10:00');
-      raise exception '% inserted a schedule into another patient plan', u;
-    exception when insufficient_privilege then null;
-    end;
+    -- the caregiver still cannot touch the other patient's plan (a doctor can since section 15: any doctor manages any patient)
+    if u = 'a3000000-0000-0000-0000-000000000003' then
+      begin
+        insert into medication_schedules (plan_id, time_of_day) values ('f2000000-0000-0000-0000-000000000002', '10:00');
+        raise exception '% inserted a schedule into another patient plan', u;
+      exception when insufficient_privilege then null;
+      end;
+    end if;
     reset role;
     -- clean the rows this iteration added, so both users start from the same state
     delete from medication_schedules where time_of_day = '10:00' and plan_id = 'f1100000-0000-0000-0000-000000000011';

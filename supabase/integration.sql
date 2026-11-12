@@ -557,3 +557,45 @@ end
 $$;
 drop trigger if exists appointments_guard on appointments;
 create trigger appointments_guard before update on appointments for each row execute function guard_appt_columns();
+
+
+-- 15) ผู้ดูแลภาพรวม (an active doctor) works on EVERY patient, like Admin. Before, a doctor saw only the patients assigned to them,
+--     so patients Admin added (and their plans, logs, appointments) were invisible to a doctor.
+--     * can_see_patient / can_manage_plan now accept any doctor (both already require an active account); patient lists, plans,
+--       medication logs and appointments all follow these two functions;
+--     * a doctor reads every caregiver, edits caregivers rows of non-staff accounts and links / unlinks them to patients.
+--       Deleting a caregiver stays Admin only (cg_w).
+create or replace function can_see_patient(pid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_active_user() and (
+    has_role('admin') or has_role('doctor')
+    or exists (select 1 from patients p where p.id = pid and p.user_id = auth.uid())
+    or exists (select 1 from patient_caregivers pc join caregivers c on c.id = pc.caregiver_id
+               where pc.patient_id = pid and pc.status = 'confirmed' and pc.revoked_at is null
+                 and c.user_id = auth.uid())
+  )
+$$;
+
+create or replace function can_manage_plan(pid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_active_user() and (
+    has_role('admin') or has_role('doctor')
+    or exists (select 1 from patient_caregivers pc join caregivers c on c.id = pc.caregiver_id
+               where pc.patient_id = pid and pc.status = 'confirmed' and pc.revoked_at is null
+                 and pc.can_manage_plan and c.user_id = auth.uid())
+  )
+$$;
+
+drop policy if exists cg_r_doctor on caregivers;
+create policy cg_r_doctor on caregivers for select to authenticated using (has_role('doctor') and is_active_user());
+drop policy if exists cg_u_doctor on caregivers;
+create policy cg_u_doctor on caregivers for update to authenticated
+  using (has_role('doctor') and is_active_user() and (user_id is null or not is_staff_user(user_id)))
+  with check (has_role('doctor') and is_active_user() and (user_id is null or not is_staff_user(user_id)));
+drop policy if exists pc_i_doctor on patient_caregivers;
+create policy pc_i_doctor on patient_caregivers for insert to authenticated with check (has_role('doctor') and is_active_user());
+drop policy if exists pc_u_doctor on patient_caregivers;
+create policy pc_u_doctor on patient_caregivers for update to authenticated
+  using (has_role('doctor') and is_active_user()) with check (has_role('doctor') and is_active_user());
+drop policy if exists pc_d_doctor on patient_caregivers;
+create policy pc_d_doctor on patient_caregivers for delete to authenticated using (has_role('doctor') and is_active_user());

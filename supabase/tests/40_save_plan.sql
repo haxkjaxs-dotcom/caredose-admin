@@ -93,21 +93,19 @@ begin
 end $$;
 reset role;
 
--- DB (assigned to P2 only): refused on P1, allowed on P2 (this P2 plan is reused by the binding tests)
+-- DB (assigned to P2 only): integration.sql section 15 lets any active doctor manage any patient, so P1 is allowed too (that extra plan
+-- is deleted right after); P2 plan is reused by the binding tests
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"73000000-0000-0000-0000-000000000003"}', true);
 do $$
 declare pid uuid;
 begin
-  begin
-    perform save_plan(null, '81000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', '1', null, '2026-11-01', null, null, array['09:00'], 'active');
-    raise exception 'DB: unassigned doctor created a plan for P1';
-  exception when insufficient_privilege then null;
-  end;
+  perform set_config('t.dbP1', save_plan(null, '81000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', '1', null, '2026-11-01', null, null, array['09:00'], 'active')::text, true);
   pid := save_plan(null, '82000000-0000-0000-0000-000000000002', 'e1000000-0000-0000-0000-000000000001', 'Y', null, '2026-11-01', null, null, array['07:00', '19:00'], 'active');
   perform set_config('t.planY', pid::text, true);
 end $$;
 reset role;
+delete from medication_plans where id = current_setting('t.dbP1')::uuid;
 
 -- CN (can_manage_plan = false) refused; CY (true) allowed
 set local role authenticated;
@@ -462,17 +460,13 @@ do $$
 begin
   assert save_plan(current_setting('t.planY')::uuid, '82000000-0000-0000-0000-000000000002', 'e1000000-0000-0000-0000-000000000001', 'Y2', null, '2026-11-01', null, null, array['07:00', '19:00'], 'active') = current_setting('t.planY')::uuid,
     'binding: DB could not edit own patient plan';
-  -- and DB cannot reach a P1 plan even by naming P2 (binding) or P1 (permission)
+  -- and DB cannot reach a P1 plan by naming P2 (binding)
   begin
     perform save_plan(current_setting('t.plan1')::uuid, '82000000-0000-0000-0000-000000000002', 'e1000000-0000-0000-0000-000000000001', 'hijack', null, '2026-11-01', null, null, array['03:00'], 'active');
     raise exception 'binding: DB edited P1 plan via P2';
   exception when insufficient_privilege then null;
   end;
-  begin
-    perform save_plan(current_setting('t.plan1')::uuid, '81000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'hijack', null, '2026-11-01', null, null, array['03:00'], 'active');
-    raise exception 'binding: DB edited P1 plan via P1';
-  exception when insufficient_privilege then null;
-  end;
+  -- (naming P1 is allowed since section 15: any doctor manages any patient, so only the binding check applies)
 end $$;
 reset role;
 do $$

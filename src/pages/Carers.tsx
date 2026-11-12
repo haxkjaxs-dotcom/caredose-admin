@@ -18,7 +18,7 @@ export function Carers({ notify, role }: Ctx) {
   const [f, setF] = useState(blank)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const canEdit = role === 'Admin' // cosmetic: cg_w / pc_w decide
+  const canEdit = role === 'Admin' || role === 'Doctor' // cosmetic: cg_w / cg_u_doctor / pc_* decide; deleting a caregiver is Admin only
 
   const load = async () => {
     const [c, p] = await Promise.all([
@@ -119,7 +119,7 @@ export function Carers({ notify, role }: Ctx) {
             <b>{c.full_name}</b>, c.phone ?? '-',
             c.patient_caregivers.map((l) => (l.patients?.full_name ?? '-') + (l.relationship ? ` (${l.relationship})` : '')).join(', ') || '-',
             <Badge tone={c.patient_caregivers.some((l) => l.can_manage_plan) ? 'green' : 'gray'}>{c.patient_caregivers.some((l) => l.can_manage_plan) ? 'จัดการแผนยาได้' : 'ดูอย่างเดียว'}</Badge>,
-            canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => open(c)}>แก้ไข</Btn><Btn kind="danger" onClick={() => remove(c)}>ลบ</Btn></div> : '',
+            canEdit ? <div className="flex gap-2"><Btn kind="ghost" onClick={() => open(c)}>แก้ไข</Btn>{role === 'Admin' && <Btn kind="danger" onClick={() => remove(c)}>ลบ</Btn>}</div> : '',
           ])}
         />
       </Card>

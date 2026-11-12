@@ -18,7 +18,8 @@ export function Users({ role: myRole }: { role: Role }) {
   const [patientOf, setPatientOf] = useState<Record<string, string>>({}) // user id -> linked patient name
   const [msg, setMsg] = useState('')
   const [form, setForm] = useState(false)
-  const [f, setF] = useState({ username: '', full_name: '', pin: '', role: 'doctor' })
+  const formRoles = isAdmin ? ROLES : ROLES.filter(([k]) => k === 'caregiver' || k === 'patient') // a doctor only makes ordinary accounts
+  const [f, setF] = useState({ username: '', full_name: '', pin: '', role: isAdmin ? 'doctor' : 'patient' })
   const [formErr, setFormErr] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -101,7 +102,7 @@ export function Users({ role: myRole }: { role: Role }) {
       return setFormErr(body?.error ?? error.message)
     }
     setForm(false)
-    setF({ username: '', full_name: '', pin: '', role: 'doctor' })
+    setF({ username: '', full_name: '', pin: '', role: formRoles[0][0] })
     setMsg('สร้างบัญชีแล้ว')
     load()
   }
@@ -117,15 +118,15 @@ export function Users({ role: myRole }: { role: Role }) {
           head={['ชื่อ', 'ชื่อผู้ใช้ / เบอร์', 'สิทธิ์', 'สถานะ', ...(staffTable && isAdmin ? ['การใช้งาน', 'ใช้งานล่าสุด'] : []), '']}
           rows={list.map((u) => [
             <div><b>{u.full_name ?? '-'}</b>{patientOf[u.id] && <div className="text-xs text-slate-500">ผู้ป่วย: {patientOf[u.id]}</div>}</div>, u.phone ?? '-',
-            u.id === me || !isAdmin ? <Badge tone="gray">{ROLES.find(([k]) => k === u.role)?.[1] ?? 'ไม่มีสิทธิ์'}</Badge> : (
+            u.id === me || (staffTable && !isAdmin) ? <Badge tone="gray">{ROLES.find(([k]) => k === u.role)?.[1] ?? 'ไม่มีสิทธิ์'}</Badge> : (
               <select className={inputCls + ' !w-auto'} value={u.role} onChange={(e) => setRole(u, e.target.value)}>
                 {u.role === 'none' && <option value="none" disabled>ไม่มีสิทธิ์</option>}
-                {ROLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {formRoles.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             ),
             <Badge tone={u.is_active ? 'green' : 'gray'}>{u.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</Badge>,
             ...(staffTable && isAdmin ? [usage[u.id] ? `${usage[u.id].n} ครั้ง` : '-', usage[u.id] ? new Date(usage[u.id].last).toLocaleString('th-TH') : 'ยังไม่มีการใช้งาน'] : []),
-            u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : !isAdmin ? <span className="text-sm text-slate-400">แก้ไขไม่ได้</span> : (
+            u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : staffTable && !isAdmin ? <span className="text-sm text-slate-400">แก้ไขไม่ได้</span> : (
               <div className="flex gap-2">
                 <Btn kind="ghost" onClick={() => toggle(u)}>{u.is_active ? 'ปิดบัญชี' : 'เปิดบัญชี'}</Btn>
                 {isAdmin && <Btn kind="danger" onClick={() => remove(u)}>ลบ</Btn>}
@@ -143,7 +144,7 @@ export function Users({ role: myRole }: { role: Role }) {
         {accounts(staff, true)}
       </Card>
       <Card>
-        <H>ผู้ใช้งานทั่วไป: ผู้ป่วยและญาติ/ผู้ดูแล ({general.length})</H>
+        <H action={!isAdmin && <Btn onClick={() => setForm(true)}>เพิ่มผู้ใช้</Btn>}>ผู้ใช้งานทั่วไป: ผู้ป่วยและญาติ/ผู้ดูแล ({general.length})</H>
         {accounts(general, false)}
       </Card>
       {isAdmin && <Card>
@@ -157,7 +158,7 @@ export function Users({ role: myRole }: { role: Role }) {
             <Field label="ชื่อผู้ใช้หรือเบอร์โทร (ใช้ login)"><input className={inputCls} maxLength={30} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value.replace(/\W/g, '') })} /></Field>
             <Field label="PIN 6 หลัก"><input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} /></Field>
             <Field label="สิทธิ์">
-              <select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{ROLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+              <select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{formRoles.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
             </Field>
             {formErr && <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{formErr}</div>}
             <div className="flex justify-end"><Btn>{busy ? 'กำลังสร้าง...' : 'สร้างบัญชี'}</Btn></div>

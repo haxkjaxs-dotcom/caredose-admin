@@ -84,7 +84,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     if (!f.full_name.trim()) return setErr('กรุณาระบุชื่อ-นามสกุล')
     if (age !== null && (!Number.isInteger(age) || age < 0 || age > 130)) return setErr('อายุต้องเป็นจำนวนเต็ม 0-130')
     if (!isThaiMobile(f.phone)) return setErr('กรุณากรอกเบอร์มือถือ 10 หลัก (ใช้เบอร์นี้ให้ผู้ป่วยเข้าแอป)')
-    if (role === 'Admin' && !/^\d{6}$/.test(f.pin)) return setErr('กรุณากำหนด PIN 6 หลักให้ผู้ป่วยเข้าสู่ระบบ')
+    if (!/^\d{6}$/.test(f.pin)) return setErr('กรุณากำหนด PIN 6 หลักให้ผู้ป่วยเข้าสู่ระบบ')
     setBusy(true)
     setErr('')
     const phone = normalizePhoneDigits(f.phone)
@@ -95,8 +95,8 @@ export function Patients({ openPatient, notify, role }: Ctx) {
       setBusy(false)
       return setErr('บันทึกไม่สำเร็จ: ' + error.message)
     }
-    // Admin also creates the patient's login (phone + PIN) and links it; create-user needs Admin, so doctors skip this
-    if (role === 'Admin') {
+    // also creates the patient login (phone + PIN) and links it (create-user accepts Admin and doctor for role patient)
+    {
       const acc = await supabase.functions.invoke('create-user', { body: { username: phone, full_name: f.full_name.trim(), pin: f.pin, role: 'patient', patient_id: pid } })
       if (acc.error) {
         const body = acc.error instanceof FunctionsHttpError ? await acc.error.context.json().catch(() => null) : null
@@ -108,7 +108,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     setBusy(false)
     setForm(false)
     setF(blank)
-    notify(role === 'Admin' ? 'เพิ่มผู้ป่วยและสร้างบัญชีแล้ว' : 'เพิ่มผู้ป่วยแล้ว')
+    notify('เพิ่มผู้ป่วยและสร้างบัญชีแล้ว')
     load()
   }
 
@@ -174,7 +174,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
             </div>
             <Field label="โรคประจำตัว"><input className={inputCls} value={f.conditions} onChange={(e) => setF({ ...f, conditions: e.target.value })} /></Field>
             <Field label="ประวัติแพ้ยา"><input className={inputCls} value={f.drug_allergies} onChange={(e) => setF({ ...f, drug_allergies: e.target.value })} /></Field>
-            {role === 'Admin' && (
+            {(
               <Field label="PIN 6 หลัก (สร้างบัญชีให้ผู้ป่วย ใช้เบอร์โทรเป็นชื่อผู้ใช้) *">
                 <input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} />
               </Field>
