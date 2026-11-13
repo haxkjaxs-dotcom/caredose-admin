@@ -616,3 +616,28 @@ end
 $$;
 drop trigger if exists caregivers_guard on caregivers;
 create trigger caregivers_guard before update on caregivers for each row execute function guard_caregiver_owner();
+
+-- 17) Security review 2026-11-13.
+--  a) A link the patient revoked (pc_revoke) stays revoked. pc_u_doctor / pc_d_doctor (#15) let a doctor set it back to confirmed,
+--     or delete it and insert a fresh confirmed one, overriding the patient's decision. A doctor may still revoke a live link,
+--     but only Admin (pc_w) re-confirms or removes a revoked one.
+drop policy if exists pc_u_doctor on patient_caregivers;
+create policy pc_u_doctor on patient_caregivers for update to authenticated
+  using (has_role('doctor') and is_active_user() and status <> 'revoked') with check (has_role('doctor') and is_active_user());
+drop policy if exists pc_d_doctor on patient_caregivers;
+create policy pc_d_doctor on patient_caregivers for delete to authenticated
+  using (has_role('doctor') and is_active_user() and status <> 'revoked');
+
+--  b) follow_ups.by_name was free text, so anyone allowed to write a note (fu_i) could sign it with a doctor's name.
+--     A direct API insert now takes the author's own profile name. SECURITY INVOKER: the caller reads their own profile (profiles_r).
+create or replace function stamp_follow_up_author() returns trigger
+language plpgsql security invoker set search_path = public as $$
+begin
+  if auth.uid() is not null and current_user in ('authenticated', 'anon') then
+    new.by_name := coalesce((select nullif(trim(coalesce(full_name, phone)), '') from profiles where id = auth.uid()), 'ไม่ระบุชื่อ');
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists follow_ups_author on follow_ups;
+create trigger follow_ups_author before insert on follow_ups for each row execute function stamp_follow_up_author();
