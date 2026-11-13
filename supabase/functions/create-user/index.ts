@@ -35,6 +35,17 @@ Deno.serve(async (req) => {
   if (patient_id != null && (role !== 'patient' || !/^[0-9a-f-]{36}$/i.test(patient_id))) return reply({ error: 'patient_id ไม่ถูกต้อง' }, 400)
   const name = String(full_name).trim().slice(0, 100)
 
+  // A patient login with a phone username links to the unlinked patients row with that phone. Checked BEFORE the account exists.
+  // Two such rows (a family sharing one number) is ambiguous: refuse, like claim_my_patient, else the login could open another person's record.
+  const digits = role === 'patient' && /^\d{9,10}$/.test(username) ? username : null
+  let pid: string | null = patient_id ?? null
+  if (!pid && digits) {
+    const same = await admin.from('patients').select('id').eq('phone', digits).is('user_id', null).limit(2)
+    if (same.error) return reply({ error: 'ตรวจสอบเบอร์ผู้ป่วยไม่สำเร็จ' }, 500)
+    if (same.data.length > 1) return reply({ error: 'เบอร์นี้มีผู้ป่วยที่ยังไม่เชื่อมบัญชีมากกว่า 1 คน กรุณาแก้เบอร์ซ้ำก่อน' }, 409)
+    pid = same.data[0]?.id ?? null
+  }
+
   const { data, error } = await admin.auth.admin.createUser({
     email: `${username.toLowerCase()}@caredose.local`,
     password: pin,
@@ -51,13 +62,26 @@ Deno.serve(async (req) => {
     : { error: null }
   // profiles start disabled (security_fixes.sql), only accounts made here are switched on
   const r3 = await admin.from('profiles').update({ is_active: true }).eq('id', id)
-  // .select() so "no unlinked patient with that id" (0 rows) counts as a failure and rolls the account back
-  const r4 = patient_id ? await admin.from('patients').update({ user_id: id }).eq('id', patient_id).is('user_id', null).select('id') : { error: null, data: [{}] }
+  // A patient login always has a patients row (the Patients page lists those): link the one given, else the unlinked row with the same phone, else make one.
+  // shortcut: phone match is exact digits, a row saved as "081-234-5678" is not found and a second row is made; normalise phones when that bites.
+  let madePatient = false
+  let r4: { error: unknown; data: unknown[] | null } = { error: null, data: [{}] }
+  if (role === 'patient') {
+    if (!pid) {
+      const ins = await admin.from('patients').insert({ full_name: name, phone: digits }).select('id').single()
+      pid = ins.data?.id ?? null
+      madePatient = !!pid
+      if (ins.error) r4 = { error: ins.error, data: null }
+    }
+    // .select() so "no unlinked patient with that id" (0 rows) counts as a failure and rolls the account back
+    if (pid && !r4.error) r4 = await admin.from('patients').update({ user_id: id }).eq('id', pid).is('user_id', null).select('id')
+  }
   if (r1.error || r2.error || r3.error || r4.error || !r4.data?.length) {
+    if (madePatient) await admin.from('patients').delete().eq('id', pid!)
     await Promise.all([admin.from('doctors').delete().eq('user_id', id), admin.from('caregivers').delete().eq('user_id', id)]) // else user_id goes null and an orphan row stays
     await admin.auth.admin.deleteUser(id) // cascades profile + role, so no half-made account is left
     return reply({ error: 'ตั้งสิทธิ์ไม่สำเร็จ ยกเลิกการสร้างบัญชี' }, 500)
   }
-  await admin.from('audit_logs').insert({ actor: user.id, action: 'create_user', table_name: 'auth.users', row_id: id, new_value: { username, role, patient_id: patient_id ?? null } })
+  await admin.from('audit_logs').insert({ actor: user.id, action: 'create_user', table_name: 'auth.users', row_id: id, new_value: { username, role, patient_id: pid } })
   return reply({ id })
 })

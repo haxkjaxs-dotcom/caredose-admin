@@ -85,9 +85,12 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     if (age !== null && (!Number.isInteger(age) || age < 0 || age > 130)) return setErr('อายุต้องเป็นจำนวนเต็ม 0-130')
     if (!isThaiMobile(f.phone)) return setErr('กรุณากรอกเบอร์มือถือ 10 หลัก (ใช้เบอร์นี้ให้ผู้ป่วยเข้าแอป)')
     if (!/^\d{6}$/.test(f.pin)) return setErr('กรุณากำหนด PIN 6 หลักให้ผู้ป่วยเข้าสู่ระบบ')
+    const phone = normalizePhoneDigits(f.phone)
+    // a patient made from the Users page already has a row with this phone: block a second one (the login would clash anyway)
+    const same = rows.find((p) => normalizePhoneDigits(p.phone ?? '') === phone)
+    if (same) return setErr(`มีผู้ป่วยเบอร์นี้แล้ว: ${same.full_name} ไม่ต้องเพิ่มซ้ำ`)
     setBusy(true)
     setErr('')
-    const phone = normalizePhoneDigits(f.phone)
     const { data: pid, error } = await supabase.rpc('add_patient', {
       p_full_name: f.full_name, p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: phone,
     })
