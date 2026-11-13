@@ -37,6 +37,7 @@ const Centered = ({ children }: { children: React.ReactNode }) => (
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
   const [role, setRole] = useState<Role | 'none' | undefined>(undefined)
+  const [name, setName] = useState('')
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
     const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
@@ -48,11 +49,12 @@ export default function App() {
     if (!uid) return
     Promise.all([
       supabase.from('user_roles').select('role').eq('user_id', uid),
-      supabase.from('profiles').select('is_active').eq('id', uid).maybeSingle(),
+      supabase.from('profiles').select('is_active, full_name').eq('id', uid).maybeSingle(),
     ]).then(([roles, prof]) => {
       const r = (roles.data ?? []).map((x) => x.role)
       // a disabled account is signed in but gets no access
       setRole(roleFromRoles(r, !!prof.data?.is_active))
+      setName(prof.data?.full_name ?? '')
     })
   }, [uid])
 
@@ -66,10 +68,10 @@ export default function App() {
       </Centered>
     )
   }
-  return <Shell role={role} />
+  return <Shell role={role} name={name} />
 }
 
-function Shell({ role }: { role: Role }) {
+function Shell({ role, name }: { role: Role; name: string }) {
   const [page, setPage] = useState(defaultPageFor(role))
   const [detail, setDetail] = useState<string | null>(null)
   const [detailReturn, setDetailReturn] = useState('patients')
@@ -119,7 +121,7 @@ function Shell({ role }: { role: Role }) {
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:px-8">
           <button className="min-h-11 rounded-xl border border-slate-300 px-4 lg:hidden" onClick={() => setOpen(true)}>เมนู</button>
           <h1 className="text-xl font-bold">{nav.find((n) => n.id === cur)?.label}</h1>
-          <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700">{role === 'Doctor' ? 'นพ.สมชาย วงศ์สกุล' : roleLabel}</span>
+          <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700">{name ? `${name} · ${roleLabel}` : roleLabel}</span>
         </header>
         <div className="space-y-6 p-4 lg:p-8">
           {cur === 'dash' && <Dashboard {...ctx} />}
