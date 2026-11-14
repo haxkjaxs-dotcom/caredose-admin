@@ -825,3 +825,13 @@ insert into patients (user_id, full_name, phone)
   from profiles p
   where exists (select 1 from user_roles r where r.user_id = p.id and r.role = 'patient')
     and not exists (select 1 from patients x where x.user_id = p.id);
+
+-- 22) Names saved before section 20 still differ (e.g. the Users page shows "นาย ธนพล ..." but the Patients page "ธนพล ...").
+--     The account name (profiles, set on the Users page, with its title) wins: copy it to the patients / caregivers / doctors rows
+--     of the same account. Safe to re-run: only rows that still differ are written. Rows with no account (user_id null) are untouched.
+update patients x set full_name = p.full_name from profiles p
+  where x.user_id = p.id and nullif(trim(p.full_name), '') is not null and x.full_name is distinct from p.full_name;
+update caregivers x set full_name = p.full_name from profiles p
+  where x.user_id = p.id and nullif(trim(p.full_name), '') is not null and x.full_name is distinct from p.full_name;
+update doctors x set full_name = p.full_name from profiles p
+  where x.user_id = p.id and nullif(trim(p.full_name), '') is not null and x.full_name is distinct from p.full_name;
