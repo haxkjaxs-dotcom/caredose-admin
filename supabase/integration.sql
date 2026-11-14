@@ -835,3 +835,37 @@ update caregivers x set full_name = p.full_name from profiles p
   where x.user_id = p.id and nullif(trim(p.full_name), '') is not null and x.full_name is distinct from p.full_name;
 update doctors x set full_name = p.full_name from profiles p
   where x.user_id = p.id and nullif(trim(p.full_name), '') is not null and x.full_name is distinct from p.full_name;
+
+-- 23) Deleting a patient also deletes its login account, so the Users page does not keep a dead account (which section 21 would
+--     even turn back into a patient row on the next run). One transaction: either both go or nothing does. Admin only, like patients_w.
+--     An account with any other role (doctor / admin, or a relative who is also a patient) is kept, with its relative links, and only
+--     loses the patient role. Only a patient-only account is deleted.
+--     The patient's plans, logs, appointments and relative links cascade as before.
+create or replace function delete_patient(p_patient_id uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid;
+  pname text;
+begin
+  if auth.uid() is null or not is_active_user() or not has_role('admin') then
+    raise exception 'ไม่มีสิทธิ์ลบผู้ป่วย' using errcode = '42501';
+  end if;
+  delete from patients where id = p_patient_id returning user_id, full_name into uid, pname;
+  if not found then
+    raise exception 'ไม่พบผู้ป่วย' using errcode = '22023';
+  end if;
+  if uid is not null and uid <> auth.uid() and not exists (select 1 from patients where user_id = uid) then
+    if exists (select 1 from user_roles where user_id = uid and role <> 'patient') then
+      delete from user_roles where user_id = uid and role = 'patient';
+    else
+      delete from caregivers where user_id = uid;
+      delete from auth.users where id = uid; -- cascades profile + roles
+    end if;
+  end if;
+  insert into audit_logs (actor, action, table_name, row_id, old_value)
+    values (auth.uid(), 'delete_patient', 'patients', p_patient_id::text, jsonb_build_object('full_name', pname, 'user_id', uid));
+end
+$$;
+revoke execute on function delete_patient(uuid) from public, anon;
+grant execute on function delete_patient(uuid) to authenticated;

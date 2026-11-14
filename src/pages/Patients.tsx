@@ -128,12 +128,11 @@ export function Patients({ openPatient, notify, role }: Ctx) {
 
   // cascades to plans, schedules, adherence logs, appointments and links, so the confirm spells that out
   const remove = async (p: PatientRow) => {
-    if (!window.confirm(`ลบผู้ป่วย "${p.full_name}" ถาวร?\nแผนยา ประวัติการทานยา นัดหมาย และการผูกญาติ/ผู้ดูแลของผู้ป่วยรายนี้จะถูกลบทั้งหมด กู้คืนไม่ได้`)) return
-    // select() so a delete that RLS silently filtered out (0 rows) is reported, not shown as success
-    const { data, error } = await supabase.from('patients').delete().eq('id', p.id).select('id')
+    if (!window.confirm(`ลบผู้ป่วย "${p.full_name}" ถาวร?\nแผนยา ประวัติการทานยา นัดหมาย และการผูกญาติ/ผู้ดูแลของผู้ป่วยรายนี้จะถูกลบทั้งหมด${p.user_id ? '\nบัญชีเข้าสู่ระบบของผู้ป่วย (หน้าผู้ใช้และสิทธิ์) จะถูกลบด้วย' : ''} กู้คืนไม่ได้`)) return
+    // delete_patient (integration.sql 23) also deletes the login account, in one transaction; it raises when not allowed
+    const { error } = await supabase.rpc('delete_patient', { p_patient_id: p.id })
     if (error) return notify('ลบผู้ป่วยไม่สำเร็จ: ' + error.message)
-    if (!data?.length) return notify('ลบผู้ป่วยไม่สำเร็จ: ไม่มีสิทธิ์')
-    notify('ลบผู้ป่วยแล้ว')
+    notify(p.user_id ? 'ลบผู้ป่วยและบัญชีแล้ว' : 'ลบผู้ป่วยแล้ว')
     load()
   }
 
