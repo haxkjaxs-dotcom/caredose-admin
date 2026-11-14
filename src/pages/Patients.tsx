@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
 import type { Tone } from '../data'
-import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, fmt, inputCls, tones } from '../ui'
+import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, TitleSelect, fmt, inputCls, tones, withTitle } from '../ui'
 import type { Ctx, FollowUp, Role } from '../ctx'
 import { isThaiMobile, normalizePhoneDigits, samePhoneGroups, planRowToView, type PlanRow, type PlanView } from '../lib/plans'
 import { SendNotice } from './SendNotice'
@@ -43,7 +43,7 @@ type PatientRow = {
 const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, phone, user_id, nickname, patient_doctors(active, doctors(full_name))'
 const doctorNames = (p: PatientRow) => p.patient_doctors.filter((x) => x.active).map((x) => x.doctors?.full_name).filter(Boolean).join(', ') || '-'
 const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
-const blank = { full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '', pin: '' }
+const blank = { title: '', full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '', pin: '' }
 
 export function Patients({ openPatient, notify, role }: Ctx) {
   const readOnly = role === 'Caregiver' // cosmetic: the database decides; detail page uses mock data so relatives get no "เปิด"
@@ -92,7 +92,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     setBusy(true)
     setErr('')
     const { data: pid, error } = await supabase.rpc('add_patient', {
-      p_full_name: f.full_name, p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: phone,
+      p_full_name: withTitle(f.title, f.full_name), p_age: age, p_gender: f.gender, p_conditions: f.conditions, p_drug_allergies: f.drug_allergies, p_phone: phone,
     })
     if (error) {
       setBusy(false)
@@ -100,7 +100,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     }
     // also creates the patient login (phone + PIN) and links it (create-user accepts Admin and doctor for role patient)
     {
-      const acc = await supabase.functions.invoke('create-user', { body: { username: phone, full_name: f.full_name.trim(), pin: f.pin, role: 'patient', patient_id: pid } })
+      const acc = await supabase.functions.invoke('create-user', { body: { username: phone, full_name: withTitle(f.title, f.full_name), pin: f.pin, role: 'patient', patient_id: pid } })
       if (acc.error) {
         const body = acc.error instanceof FunctionsHttpError ? await acc.error.context.json().catch(() => null) : null
         setBusy(false)
@@ -174,7 +174,10 @@ export function Patients({ openPatient, notify, role }: Ctx) {
       {form && (
         <Modal title="เพิ่มผู้ป่วย" onClose={() => setForm(false)}>
           <form onSubmit={add} className="space-y-4">
-            <Field label="ชื่อ-นามสกุล *"><input className={inputCls} value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
+            <div className="grid gap-4 sm:grid-cols-[10rem_1fr]">
+              <TitleSelect v={f.title} set={(title) => setF({ ...f, title })} />
+              <Field label="ชื่อ-นามสกุล *"><input className={inputCls} value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
+            </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="อายุ (ปี)"><input className={inputCls} type="number" min={0} max={130} step={1} value={f.age} onChange={(e) => setF({ ...f, age: e.target.value })} /></Field>
               <Field label="เพศ">

@@ -98,6 +98,19 @@ export const Field = ({ label, children }: { label: string; children: ReactNode 
     {children}
   </label>
 )
+// The title is stored inside full_name ("นาย ธนพล ..."), like the names already saved. Not added twice if typed in the name too.
+export const withTitle = (title: string, name: string) => {
+  const n = name.trim()
+  return title && n && !n.startsWith(title) ? `${title} ${n}` : n // empty name stays empty, so "required" checks still fire
+}
+export const TitleSelect = ({ v, set }: { v: string; set: (s: string) => void }) => (
+  <Field label="คำนำหน้า">
+    <select className={inputCls} value={v} onChange={(e) => set(e.target.value)}>
+      <option value="">ไม่ระบุ</option>
+      {['นาย', 'นาง', 'นางสาว', 'เด็กชาย', 'เด็กหญิง'].map((t) => <option key={t}>{t}</option>)}
+    </select>
+  </Field>
+)
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>

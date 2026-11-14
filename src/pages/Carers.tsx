@@ -1,14 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
-import { Badge, Btn, Card, Field, H, Modal, Table, inputCls } from '../ui'
+import { Badge, Btn, Card, Field, H, Modal, Table, TitleSelect, inputCls, withTitle } from '../ui'
 import { normalizePhoneDigits } from '../lib/plans'
 import type { Ctx } from '../ctx'
 
 type Link = { patient_id: string; relationship: string | null; can_manage_plan: boolean; patients: { full_name: string } | null }
 type Carer = { id: string; full_name: string; phone: string | null; patient_caregivers: Link[] }
 type Pat = { id: string; full_name: string }
-const blank = { name: '', phone: '', pin: '', patient: '', rel: '', manage: false }
+const blank = { title: '', name: '', phone: '', pin: '', patient: '', rel: '', manage: false }
 const nul = (s: string) => s.trim() || null
 
 export function Carers({ notify, role }: Ctx) {
@@ -51,7 +51,7 @@ export function Carers({ notify, role }: Ctx) {
     if (form === 'new' && !/^\d{6}$/.test(f.pin)) return setErr('กรุณากำหนด PIN 6 หลัก')
     setBusy(true)
     setErr('')
-    const row = { full_name: f.name.trim(), phone: nul(f.phone) }
+    const row = { full_name: withTitle(f.title, f.name), phone: nul(f.phone) }
     let r
     if (form === 'new') {
       // a new caregiver is also a user account (phone + PIN, role caregiver); create-user makes the caregivers row and links it
@@ -127,6 +127,7 @@ export function Carers({ notify, role }: Ctx) {
         <Modal title={form === 'new' ? 'เพิ่มญาติ/ผู้ดูแล' : 'แก้ไขญาติ/ผู้ดูแล'} onClose={() => setForm(null)}>
           <form onSubmit={save} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
+              {form === 'new' && <TitleSelect v={f.title} set={(title) => setF({ ...f, title })} />}
               <Field label="ชื่อ-นามสกุล *"><input className={inputCls} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
               <Field label={form === 'new' ? 'เบอร์โทร * (ใช้เป็นชื่อผู้ใช้)' : 'เบอร์โทร'}><input className={inputCls} inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
               {form === 'new' && <Field label="PIN 6 หลัก *"><input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} /></Field>}

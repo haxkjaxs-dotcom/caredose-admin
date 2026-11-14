@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
-import { Badge, Btn, Card, Field, H, Modal, Table, inputCls } from '../ui'
+import { Badge, Btn, Card, Field, H, Modal, Table, TitleSelect, inputCls, withTitle } from '../ui'
 import type { Role } from '../ctx'
 
 const ROLES: [string, string][] = [['admin', 'Admin'], ['doctor', 'ผู้ดูแลภาพรวม'], ['caregiver', 'ญาติ/ผู้ดูแล'], ['patient', 'ผู้ป่วย']]
@@ -20,6 +20,8 @@ export function Users({ role: myRole }: { role: Role }) {
   const [form, setForm] = useState(false)
   const formRoles = isAdmin ? ROLES : ROLES.filter(([k]) => k === 'caregiver' || k === 'patient') // a doctor only makes ordinary accounts
   const [f, setF] = useState({ username: '', full_name: '', pin: '', role: isAdmin ? 'doctor' : 'patient' })
+  const [title, setTitle] = useState('')
+  const titled = f.role === 'caregiver' || f.role === 'patient' // no title for Admin / ผู้ดูแลภาพรวม accounts
   const [formErr, setFormErr] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -106,7 +108,7 @@ export function Users({ role: myRole }: { role: Role }) {
     if (busy) return
     setBusy(true)
     setFormErr('')
-    const { error } = await supabase.functions.invoke('create-user', { body: f })
+    const { error } = await supabase.functions.invoke('create-user', { body: { ...f, full_name: withTitle(titled ? title : '', f.full_name) } })
     setBusy(false)
     if (error) {
       const body = error instanceof FunctionsHttpError ? await error.context.json().catch(() => null) : null
@@ -114,6 +116,7 @@ export function Users({ role: myRole }: { role: Role }) {
     }
     setForm(false)
     setF({ username: '', full_name: '', pin: '', role: formRoles[0][0] })
+    setTitle('')
     setMsg('สร้างบัญชีแล้ว')
     load()
   }
@@ -166,7 +169,10 @@ export function Users({ role: myRole }: { role: Role }) {
       {form && (
         <Modal title="เพิ่มผู้ใช้" onClose={() => setForm(false)}>
           <form onSubmit={create} className="space-y-4">
-            <Field label="ชื่อ-นามสกุล"><input className={inputCls} value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
+            <div className={titled ? 'grid gap-4 sm:grid-cols-[10rem_1fr]' : ''}>
+              {titled && <TitleSelect v={title} set={setTitle} />}
+              <Field label="ชื่อ-นามสกุล"><input className={inputCls} value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
+            </div>
             <Field label="ชื่อผู้ใช้หรือเบอร์โทร (ใช้ login)"><input className={inputCls} maxLength={30} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value.replace(/\W/g, '') })} /></Field>
             <Field label="PIN 6 หลัก"><input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} /></Field>
             <Field label="สิทธิ์">
