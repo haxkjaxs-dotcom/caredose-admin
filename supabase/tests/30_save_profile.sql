@@ -1,6 +1,9 @@
 -- save_my_profile (integration.sql).
 -- Users: S1 + S2 are active patients (rows P1, P2), S3 is active with no patient row, S4 has a patient row but is disabled.
 begin;
+-- this test keeps profile and patient names apart on purpose: switch the name sync (integration.sql 20) off for it
+alter table profiles disable trigger profiles_name_sync;
+alter table patients disable trigger patients_name_sync;
 
 insert into auth.users (id, email, phone, phone_confirmed_at) values
   ('51000000-0000-0000-0000-000000000001', 's1@t', '66811111111', now()),

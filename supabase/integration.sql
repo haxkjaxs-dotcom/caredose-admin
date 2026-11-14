@@ -781,7 +781,47 @@ $$;
 revoke execute on function delete_my_relative(uuid) from public, anon;
 grant execute on function delete_my_relative(uuid) to authenticated;
 
--- 16) appointments get a status "scheduled" (นัดแล้ว) between pending (รอนัด) and done (มาตามนัด).
+-- 19) appointments get a status "scheduled" (นัดแล้ว) between pending (รอนัด) and done (มาตามนัด).
 alter table appointments drop constraint if exists appointments_status_check;
 alter table appointments add constraint appointments_status_check
   check (status in ('pending', 'scheduled', 'done', 'postponed', 'cancelled'));
+
+-- 20) One person, one name. profiles / patients / caregivers / doctors each keep a full_name for the same account (linked by user_id);
+--     renaming on any page now carries to the others. pg_trigger_depth() stops the copies from triggering each other forever.
+--     The copy runs as definer (it bypasses RLS), so it never carries a non-admin's edit to ANOTHER staff account: any doctor may edit
+--     any patients row (patients_u_doctor), and a patients row can belong to an account later made doctor / admin, which would let a
+--     doctor rename a colleague's profile (profiles_u forbids that) and so the name follow-ups are signed with. That row keeps its own name.
+create or replace function sync_person_name() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare uid uuid;
+begin
+  if pg_trigger_depth() > 1 or new.full_name is not distinct from old.full_name or coalesce(trim(new.full_name), '') = '' then
+    return new;
+  end if;
+  uid := (to_jsonb(new) ->> case when tg_table_name = 'profiles' then 'id' else 'user_id' end)::uuid; -- profiles has no user_id column
+  if uid is null then return new; end if;
+  if auth.uid() is not null and uid <> auth.uid() and not has_role('admin') and is_staff_user(uid) then return new; end if;
+  if tg_table_name <> 'profiles' then update profiles set full_name = new.full_name where id = uid and full_name is distinct from new.full_name; end if;
+  if tg_table_name <> 'patients' then update patients set full_name = new.full_name where user_id = uid and full_name is distinct from new.full_name; end if;
+  if tg_table_name <> 'caregivers' then update caregivers set full_name = new.full_name where user_id = uid and full_name is distinct from new.full_name; end if;
+  if tg_table_name <> 'doctors' then update doctors set full_name = new.full_name where user_id = uid and full_name is distinct from new.full_name; end if;
+  return new;
+end
+$$;
+revoke execute on function sync_person_name() from public, anon, authenticated;
+drop trigger if exists profiles_name_sync on profiles;
+create trigger profiles_name_sync after update of full_name on profiles for each row execute function sync_person_name();
+drop trigger if exists patients_name_sync on patients;
+create trigger patients_name_sync after update of full_name on patients for each row execute function sync_person_name();
+drop trigger if exists caregivers_name_sync on caregivers;
+create trigger caregivers_name_sync after update of full_name on caregivers for each row execute function sync_person_name();
+drop trigger if exists doctors_name_sync on doctors;
+create trigger doctors_name_sync after update of full_name on doctors for each row execute function sync_person_name();
+
+-- 21) Every patient-role account gets its patients row, so the Patients page lists the same people as the Users page. Accounts made
+--     before create-user made the row itself had none. Safe to re-run: only accounts with no patients row are touched.
+insert into patients (user_id, full_name, phone)
+  select p.id, coalesce(nullif(trim(p.full_name), ''), p.phone, '-'), p.phone
+  from profiles p
+  where exists (select 1 from user_roles r where r.user_id = p.id and r.role = 'patient')
+    and not exists (select 1 from patients x where x.user_id = p.id);

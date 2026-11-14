@@ -82,6 +82,17 @@ export function Users({ role: myRole }: { role: Role }) {
     load()
   }
 
+  // the DB trigger (integration.sql 20) carries the new name to the patients / caregivers / doctors row of this account
+  const rename = async (u: U) => {
+    const name = window.prompt('ชื่อ-นามสกุลใหม่', u.full_name ?? '')?.trim()
+    if (!name || name === u.full_name) return
+    const { data, error } = await supabase.from('profiles').update({ full_name: name }).eq('id', u.id).select('id')
+    if (error) return setMsg('แก้ชื่อไม่สำเร็จ: ' + error.message)
+    if (!data?.length) return setMsg('แก้ชื่อไม่สำเร็จ: ไม่มีสิทธิ์')
+    setMsg('แก้ชื่อแล้ว')
+    load()
+  }
+
   const remove = async (u: U) => {
     if (!window.confirm(`ลบบัญชี "${u.full_name ?? u.phone ?? '-'}" ถาวร? ลบแล้วเข้าสู่ระบบไม่ได้อีก`)) return
     const { error } = await supabase.rpc('delete_user', { p_user_id: u.id })
@@ -128,6 +139,7 @@ export function Users({ role: myRole }: { role: Role }) {
             ...(staffTable && isAdmin ? [usage[u.id] ? `${usage[u.id].n} ครั้ง` : '-', usage[u.id] ? new Date(usage[u.id].last).toLocaleString('th-TH') : 'ยังไม่มีการใช้งาน'] : []),
             u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : staffTable && !isAdmin ? <span className="text-sm text-slate-400">แก้ไขไม่ได้</span> : (
               <div className="flex gap-2">
+                <Btn kind="ghost" onClick={() => rename(u)}>แก้ชื่อ</Btn>
                 <Btn kind="ghost" onClick={() => toggle(u)}>{u.is_active ? 'ปิดบัญชี' : 'เปิดบัญชี'}</Btn>
                 {isAdmin && <Btn kind="danger" onClick={() => remove(u)}>ลบ</Btn>}
               </div>

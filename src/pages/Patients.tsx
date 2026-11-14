@@ -115,6 +115,17 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     load()
   }
 
+  // the DB trigger (integration.sql 20) carries the new name to the linked account, so the Users page shows it too
+  const rename = async (p: PatientRow) => {
+    const name = window.prompt('ชื่อ-นามสกุลใหม่', p.full_name)?.trim()
+    if (!name || name === p.full_name) return
+    const { data, error } = await supabase.from('patients').update({ full_name: name }).eq('id', p.id).select('id')
+    if (error) return notify('แก้ชื่อไม่สำเร็จ: ' + error.message)
+    if (!data?.length) return notify('แก้ชื่อไม่สำเร็จ: ไม่มีสิทธิ์')
+    notify('แก้ชื่อแล้ว')
+    load()
+  }
+
   // cascades to plans, schedules, adherence logs, appointments and links, so the confirm spells that out
   const remove = async (p: PatientRow) => {
     if (!window.confirm(`ลบผู้ป่วย "${p.full_name}" ถาวร?\nแผนยา ประวัติการทานยา นัดหมาย และการผูกญาติ/ผู้ดูแลของผู้ป่วยรายนี้จะถูกลบทั้งหมด กู้คืนไม่ได้`)) return
@@ -153,6 +164,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
             readOnly ? '' : (
               <div className="flex gap-2">
                 <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>
+                <Btn kind="ghost" onClick={() => rename(p)}>แก้ชื่อ</Btn>
                 {role === 'Admin' && <Btn kind="danger" onClick={() => remove(p)}>ลบ</Btn>}{/* cosmetic: patients_w decides */}
               </div>
             ),
