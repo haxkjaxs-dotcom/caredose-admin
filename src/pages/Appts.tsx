@@ -5,8 +5,8 @@ import { Badge, Btn, Card, Field, Modal, Select, Table, fmt, inputCls } from '..
 import type { Ctx } from '../ctx'
 
 // database status -> label shown on screen
-const LABEL: Record<string, string> = { pending: 'รอนัด', done: 'มาตามนัด', postponed: 'เลื่อนนัด', cancelled: 'ยกเลิก' }
-const TONE: Record<string, Tone> = { pending: 'yellow', done: 'green', postponed: 'gray', cancelled: 'red' }
+const LABEL: Record<string, string> = { pending: 'รอนัด', scheduled: 'นัดแล้ว', done: 'มาตามนัด', postponed: 'เลื่อนนัด', cancelled: 'ยกเลิก' }
+const TONE: Record<string, Tone> = { pending: 'yellow', scheduled: 'green', done: 'green', postponed: 'gray', cancelled: 'red' }
 type Row = { id: string; patient_id: string; appointment_at: string; place: string | null; reason: string | null; status: string; patients: { full_name: string } | null; doctors: { full_name: string } | null }
 type Opt = { id: string; full_name: string }
 const blank = { doctor: '', at: '', place: '', reason: '' }
@@ -76,8 +76,11 @@ export function Appts({ notify, openPatient }: Ctx) {
             a.doctors?.full_name ?? '-', fmt(a.appointment_at), a.place ?? '-', a.reason ?? '-', <Badge tone={TONE[a.status]}>{LABEL[a.status]}</Badge>,
             <div className="flex flex-wrap gap-2">
               <Btn kind="ghost" onClick={() => openPatient(a.patient_id)}>ดูประวัติการทานยา</Btn>
-              <Btn kind="ghost" onClick={() => set(a.id, 'postponed')}>เลื่อน</Btn>
-              <Btn kind="danger" onClick={() => set(a.id, 'cancelled')}>ยกเลิก</Btn>
+              {a.status !== 'scheduled' && <Btn kind="ghost" onClick={() => set(a.id, 'scheduled')}>นัดแล้ว</Btn>}
+              {a.status !== 'done' && <Btn kind="ghost" onClick={() => set(a.id, 'done')}>มาตามนัด</Btn>}
+              {a.status !== 'pending' && <Btn kind="ghost" onClick={() => set(a.id, 'pending')}>กลับเป็นรอนัด</Btn>}
+              {a.status !== 'postponed' && <Btn kind="ghost" onClick={() => set(a.id, 'postponed')}>เลื่อน</Btn>}
+              {a.status !== 'cancelled' && <Btn kind="danger" onClick={() => set(a.id, 'cancelled')}>ยกเลิก</Btn>}
             </div>,
           ])}
         />

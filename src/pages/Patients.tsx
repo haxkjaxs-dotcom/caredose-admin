@@ -206,7 +206,7 @@ export function PatientDetail({ id, back, followUps, setFollowUps, notify, role 
       .select('id, medicine_id, dose, meal_relation, start_date, end_date, status, doctor_note, medicines(generic_name, trade_name), medication_schedules(time_of_day, days_of_week, interval_days)')
       .eq('patient_id', id).eq('status', 'active').order('start_date', { ascending: false })
       .then(({ data }) => setPlans(((data ?? []) as unknown as PlanRow[]).map(planRowToView)))
-    supabase.from('appointments').select('appointment_at, place, reason').eq('patient_id', id).eq('status', 'pending').gte('appointment_at', new Date().toISOString())
+    supabase.from('appointments').select('appointment_at, place, reason').eq('patient_id', id).in('status', ['pending', 'scheduled']).gte('appointment_at', new Date().toISOString())
       .order('appointment_at').limit(1).then(({ data }) => setNext(data?.[0] ?? null))
   }, [id])
   if (p === undefined) return <div className="text-slate-400">กำลังโหลด...</div>

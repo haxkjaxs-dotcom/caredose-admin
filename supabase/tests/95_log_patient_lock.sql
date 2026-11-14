@@ -115,10 +115,10 @@ begin
   update patients set conditions = 'HT' where id = 'b1000000-0000-0000-0000-000000000001';
   get diagnostics n = row_count;
   assert n = 1, 'assigned doctor could not edit the patient';
-  -- a doctor not assigned to P2 still cannot
+  -- any active doctor edits any patient (integration.sql section 15)
   update patients set conditions = 'HT' where id = 'b2000000-0000-0000-0000-000000000002';
   get diagnostics n = row_count;
-  assert n = 0, 'doctor edited a patient not assigned to them';
+  assert n = 1, 'doctor could not edit a patient not assigned to them';
 end $$;
 reset role;
 do $$

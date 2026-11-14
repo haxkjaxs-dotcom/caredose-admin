@@ -641,3 +641,147 @@ end
 $$;
 drop trigger if exists follow_ups_author on follow_ups;
 create trigger follow_ups_author before insert on follow_ups for each row execute function stamp_follow_up_author();
+
+--     * a doctor also edits any patient's chart (13b limited that to assigned doctors); user_id / admin columns stay guarded by patients_guard.
+drop policy if exists patients_u_doctor on patients;
+create policy patients_u_doctor on patients for update to authenticated
+  using (has_role('doctor') and is_active_user()) with check (has_role('doctor') and is_active_user());
+
+-- 18) Relatives the patient manages from the app (two-way with the Admin page "ญาติและผู้ดูแล").
+--     A relative the patient adds is only a contact: a caregivers row with user_id null and added_by_patient = true, linked as 'confirmed'
+--     with no plan/appointment rights. It is NEVER matched to an existing caregivers row, even with the same phone: such an account would
+--     otherwise start seeing the patient's data (can_see_patient) without the patient having agreed to that.
+--     The patient edits or deletes only their own contacts (added_by_patient, no account attached, linked to nobody else). The patient is found from
+--     auth.uid() (patients.user_id), never from a client-supplied id.
+alter table caregivers add column if not exists added_by_patient boolean not null default false;
+
+-- Every live (not revoked) relative of the signed-in patient, including the ones an Admin linked. editable: the patient may change it.
+create or replace function list_my_relatives()
+returns table (id uuid, name text, relationship text, phone text, editable boolean)
+language plpgsql stable security definer set search_path = public as $$
+declare pid uuid;
+begin
+  if auth.uid() is null or not is_active_user() then
+    raise exception 'ต้องเข้าสู่ระบบด้วยบัญชีที่เปิดใช้งาน' using errcode = '42501';
+  end if;
+  select p.id into pid from patients p where p.user_id = auth.uid() order by p.id limit 1;
+  if pid is null then
+    raise exception 'ไม่พบข้อมูลผู้ป่วยของบัญชีนี้' using errcode = '42501';
+  end if;
+  return query
+    select c.id, c.full_name, pc.relationship, c.phone,
+           (c.added_by_patient and c.user_id is null and not exists (select 1 from patient_caregivers o where o.caregiver_id = c.id and o.patient_id <> pid))
+      from patient_caregivers pc join caregivers c on c.id = pc.caregiver_id
+     where pc.patient_id = pid and pc.status <> 'revoked' and pc.revoked_at is null
+     order by c.full_name, c.id;
+end
+$$;
+revoke execute on function list_my_relatives() from public, anon;
+grant execute on function list_my_relatives() to authenticated;
+
+-- p_id null creates a relative; otherwise it changes one the patient may edit. Returns the relative's id.
+create or replace function save_my_relative(p_id uuid, p_name text, p_relationship text, p_phone text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := auth.uid();
+  pid uuid;
+  rid uuid;
+  nm text := regexp_replace(coalesce(p_name, ''), '^\s+|\s+$', '', 'g');
+  rel text := nullif(regexp_replace(coalesce(p_relationship, ''), '^\s+|\s+$', '', 'g'), '');
+  ph text := regexp_replace(coalesce(p_phone, ''), '^\s+|\s+$', '', 'g');
+  old_row caregivers%rowtype;
+  old_rel text;
+begin
+  if uid is null or not is_active_user() then
+    raise exception 'ต้องเข้าสู่ระบบด้วยบัญชีที่เปิดใช้งาน' using errcode = '42501';
+  end if;
+  select p.id into pid from patients p where p.user_id = uid order by p.id limit 1;
+  if pid is null then
+    raise exception 'ไม่พบข้อมูลผู้ป่วยของบัญชีนี้' using errcode = '42501';
+  end if;
+  -- one writer per patient at a time, so a double tap cannot slip past the limit of 20
+  perform pg_advisory_xact_lock(hashtextextended('save_my_relative:' || pid::text, 0));
+
+  if char_length(nm) not between 1 and 100 then
+    raise exception 'ชื่อต้องยาว 1-100 ตัวอักษร' using errcode = '22023';
+  end if;
+  if rel is not null and char_length(rel) > 50 then
+    raise exception 'ความสัมพันธ์ต้องไม่เกิน 50 ตัวอักษร' using errcode = '22023';
+  end if;
+  if char_length(ph) not between 1 and 20 then
+    raise exception 'เบอร์โทรต้องยาว 1-20 ตัว' using errcode = '22023';
+  end if;
+
+  if p_id is null then
+    if (select count(*) from patient_caregivers where patient_id = pid and status <> 'revoked' and revoked_at is null) >= 20 then
+      raise exception 'เพิ่มญาติได้ไม่เกิน 20 คน' using errcode = '22023';
+    end if;
+    insert into caregivers (user_id, full_name, phone, added_by_patient) values (null, nm, ph, true) returning id into rid;
+    insert into patient_caregivers (patient_id, caregiver_id, relationship, status, confirmed_at)
+      values (pid, rid, rel, 'confirmed', now());
+    insert into audit_logs (actor, action, table_name, row_id, new_value)
+      values (uid, 'save_relative', 'caregivers', rid::text,
+              jsonb_build_object('patient_id', pid, 'name', nm, 'relationship', rel, 'phone', ph));
+  else
+    select c.* into old_row from caregivers c
+     where c.id = p_id and c.added_by_patient and c.user_id is null
+       and exists (select 1 from patient_caregivers x where x.caregiver_id = c.id and x.patient_id = pid and x.status <> 'revoked' and x.revoked_at is null)
+       and not exists (select 1 from patient_caregivers o where o.caregiver_id = c.id and o.patient_id <> pid)
+       for update;
+    if not found then
+      raise exception 'แก้ไขญาติคนนี้ไม่ได้' using errcode = '42501';
+    end if;
+    rid := old_row.id;
+    select relationship into old_rel from patient_caregivers where patient_id = pid and caregiver_id = rid;
+    update caregivers set full_name = nm, phone = ph where id = rid;
+    update patient_caregivers set relationship = rel where patient_id = pid and caregiver_id = rid;
+    insert into audit_logs (actor, action, table_name, row_id, old_value, new_value)
+      values (uid, 'save_relative', 'caregivers', rid::text,
+              jsonb_build_object('patient_id', pid, 'name', old_row.full_name, 'relationship', old_rel, 'phone', old_row.phone),
+              jsonb_build_object('patient_id', pid, 'name', nm, 'relationship', rel, 'phone', ph));
+  end if;
+  return rid;
+end
+$$;
+revoke execute on function save_my_relative(uuid, text, text, text) from public, anon;
+grant execute on function save_my_relative(uuid, text, text, text) to authenticated;
+
+-- Deletes a relative the patient may edit (the caregivers row goes, and its link with it).
+create or replace function delete_my_relative(p_id uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := auth.uid();
+  pid uuid;
+  old_row caregivers%rowtype;
+begin
+  if uid is null or not is_active_user() then
+    raise exception 'ต้องเข้าสู่ระบบด้วยบัญชีที่เปิดใช้งาน' using errcode = '42501';
+  end if;
+  select p.id into pid from patients p where p.user_id = uid order by p.id limit 1;
+  if pid is null then
+    raise exception 'ไม่พบข้อมูลผู้ป่วยของบัญชีนี้' using errcode = '42501';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('save_my_relative:' || pid::text, 0));
+  select c.* into old_row from caregivers c
+   where c.id = p_id and c.added_by_patient and c.user_id is null
+     and exists (select 1 from patient_caregivers x where x.caregiver_id = c.id and x.patient_id = pid)
+     and not exists (select 1 from patient_caregivers o where o.caregiver_id = c.id and o.patient_id <> pid)
+     for update;
+  if not found then
+    raise exception 'ลบญาติคนนี้ไม่ได้' using errcode = '42501';
+  end if;
+  delete from caregivers where id = old_row.id;
+  insert into audit_logs (actor, action, table_name, row_id, old_value)
+    values (uid, 'delete_relative', 'caregivers', old_row.id::text,
+            jsonb_build_object('patient_id', pid, 'name', old_row.full_name, 'phone', old_row.phone));
+end
+$$;
+revoke execute on function delete_my_relative(uuid) from public, anon;
+grant execute on function delete_my_relative(uuid) to authenticated;
+
+-- 16) appointments get a status "scheduled" (นัดแล้ว) between pending (รอนัด) and done (มาตามนัด).
+alter table appointments drop constraint if exists appointments_status_check;
+alter table appointments add constraint appointments_status_check
+  check (status in ('pending', 'scheduled', 'done', 'postponed', 'cancelled'));

@@ -22,6 +22,9 @@ begin
   assert (select count(*) from patients where id::text like '_1970000%' or id::text like '_2970000%') = 2, 'doctor does not see every patient';
   assert (select count(*) from caregivers where id::text like 'c_970000%') = 2, 'doctor does not read every caregiver';
   assert save_plan(null, 'b2970000-0000-0000-0000-000000000002', 'e1970000-0000-0000-0000-000000000001', '1', null, '2026-11-01', null, null, array['09:00'], 'active') is not null, 'doctor cannot plan an unassigned patient';
+  update patients set drug_allergies = 'penicillin' where id = 'b2970000-0000-0000-0000-000000000002';
+  get diagnostics n = row_count;
+  assert n = 1, 'doctor cannot edit an unassigned patient';
   update caregivers set phone = '0812345678' where id = 'c1970000-0000-0000-0000-000000000001';
   get diagnostics n = row_count;
   assert n = 1, 'doctor cannot edit a caregiver';

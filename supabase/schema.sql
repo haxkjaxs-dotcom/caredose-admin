@@ -133,7 +133,7 @@ create table appointments (
   department text,
   reason text,
   note text,
-  status text not null default 'pending' check (status in ('pending', 'done', 'postponed', 'cancelled'))
+  status text not null default 'pending' check (status in ('pending', 'scheduled', 'done', 'postponed', 'cancelled'))
 );
 
 create table audit_logs (
