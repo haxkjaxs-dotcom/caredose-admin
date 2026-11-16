@@ -44,7 +44,7 @@ const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, ph
 // the doctor's name is typed on the patient (doctor_name); the web has one ผู้ดูแลภาพรวม account, so no per-doctor user is needed. Older links still show.
 const doctorNames = (p: PatientRow) => p.doctor_name?.trim() || p.patient_doctors.filter((x) => x.active).map((x) => x.doctors?.full_name).filter(Boolean).join(', ') || '-'
 const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
-const blank = { title: '', doctor: '', full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '' }
+const blank = { title: 'นาย', doctor: '', full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '' }
 
 export function Patients({ openPatient, notify, role }: Ctx) {
   const readOnly = role === 'Caregiver' // cosmetic: the database decides; detail page uses mock data so relatives get no "เปิด"

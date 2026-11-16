@@ -11,3 +11,8 @@ describe('withTitle', () => {
 describe('withTitle, child titles', () => {
   it('adds เด็กหญิง', () => expect(withTitle('เด็กหญิง', 'มะลิ ใจดี')).toBe('เด็กหญิง มะลิ ใจดี'))
 })
+
+describe('withTitle, name already has another title', () => {
+  it('keeps นางสาว typed in the name when the dropdown is still นาย', () => expect(withTitle('นาย', 'นางสาว มะลิ')).toBe('นางสาว มะลิ'))
+  it('keeps an edited name as it is', () => expect(withTitle('นาย', 'นาง สมหญิง รักสงบ')).toBe('นาง สมหญิง รักสงบ'))
+})

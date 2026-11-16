@@ -8,7 +8,7 @@ import type { Ctx } from '../ctx'
 type Link = { patient_id: string; relationship: string | null; can_manage_plan: boolean; patients: { full_name: string } | null }
 type Carer = { id: string; full_name: string; phone: string | null; patient_caregivers: Link[] }
 type Pat = { id: string; full_name: string }
-const blank = { title: '', name: '', phone: '', pin: '', patient: '', rel: '', manage: false }
+const blank = { title: 'นาย', name: '', phone: '', pin: '', patient: '', rel: '', manage: false }
 const nul = (s: string) => s.trim() || null
 
 export function Carers({ notify, role }: Ctx) {
@@ -34,7 +34,7 @@ export function Carers({ notify, role }: Ctx) {
 
   const open = (c?: Carer) => {
     setErr('')
-    setF(c ? { ...blank, name: c.full_name, phone: c.phone ?? '' } : blank)
+    setF(c ? { ...blank, title: '', name: c.full_name, phone: c.phone ?? '' } : blank)
     setForm(c?.id ?? 'new')
   }
   // picking a patient the caregiver is already linked to loads that link, so it can be edited

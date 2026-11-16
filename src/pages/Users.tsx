@@ -20,7 +20,7 @@ export function Users({ role: myRole }: { role: Role }) {
   const [form, setForm] = useState(false)
   const formRoles = isAdmin ? ROLES : ROLES.filter(([k]) => k === 'caregiver' || k === 'patient') // a doctor only makes ordinary accounts
   const [f, setF] = useState({ username: '', full_name: '', pin: '', role: isAdmin ? 'doctor' : 'patient' })
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState('นาย')
   const titled = f.role === 'caregiver' || f.role === 'patient' // no title for Admin / ผู้ดูแลภาพรวม accounts
   const [formErr, setFormErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -125,7 +125,7 @@ export function Users({ role: myRole }: { role: Role }) {
     }
     setForm(false)
     setF({ username: '', full_name: '', pin: '', role: formRoles[0][0] })
-    setTitle('')
+    setTitle('นาย')
     setMsg('สร้างบัญชีแล้ว')
     load()
   }
