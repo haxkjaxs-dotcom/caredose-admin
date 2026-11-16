@@ -36,7 +36,7 @@ export function validatePlanForm(f: { medicineId: string; dose: string; start: s
   if (f.end && f.end < f.start) return 'วันที่สิ้นสุดต้องไม่ก่อนวันที่เริ่ม' // ISO yyyy-mm-dd compares lexically
   if (f.times.length === 0 || !f.times.every(isHHmm)) return 'เพิ่มเวลาทานอย่างน้อย 1 เวลา (รูป HH:mm)'
   if (f.ruleKind === 'weekdays' && f.days.length === 0) return 'เลือกวันที่ทานอย่างน้อย 1 วัน'
-  if (f.ruleKind === 'interval' && !isIntervalText(f.interval)) return 'ทุก N วัน: N ต้องเป็นจำนวนเต็ม 2-365'
+  if (f.ruleKind === 'interval' && !isIntervalText(f.interval)) return 'ทานเว้นวัน: ใส่จำนวนวันเป็นตัวเลข 2-365 เช่น 2'
   return null
 }
 

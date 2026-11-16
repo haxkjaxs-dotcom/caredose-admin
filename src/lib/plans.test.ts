@@ -210,7 +210,7 @@ describe('validatePlanForm rule', () => {
   })
   it('interval must be an integer 2-365', () => {
     for (const bad of ['1', '366', 'abc', '', '2.5', '0']) {
-      expect(validatePlanForm({ ...ok, ruleKind: 'interval', interval: bad })).toBe('ทุก N วัน: N ต้องเป็นจำนวนเต็ม 2-365')
+      expect(validatePlanForm({ ...ok, ruleKind: 'interval', interval: bad })).toBe('ทานเว้นวัน: ใส่จำนวนวันเป็นตัวเลข 2-365 เช่น 2')
     }
     for (const good of ['2', '365']) expect(validatePlanForm({ ...ok, ruleKind: 'interval', interval: good })).toBeNull()
   })

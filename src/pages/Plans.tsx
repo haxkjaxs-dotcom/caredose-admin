@@ -163,8 +163,8 @@ function PlanForm({ init, pid, meds, reloadMeds, notify, onClose, onSaved }: { i
           <div className="mb-1 text-sm font-medium text-slate-600">ความถี่ *</div>
           <select aria-label="ความถี่" className={inputCls} value={f.ruleKind} onChange={(e) => setF({ ...f, ruleKind: e.target.value as Form['ruleKind'] })}>
             <option value="daily">ทุกวัน</option>
-            <option value="weekdays">เฉพาะบางวันของสัปดาห์</option>
-            <option value="interval">ทุก N วัน (นับจากวันที่เริ่ม)</option>
+            <option value="weekdays">เลือกวันที่ทาน (เช่น จันทร์ พุธ ศุกร์)</option>
+            <option value="interval">ทานเว้นวัน (เช่น ทุก 2 วัน)</option>
           </select>
           {f.ruleKind === 'weekdays' && (
             <div className="mt-2 flex flex-wrap gap-2">
@@ -180,7 +180,7 @@ function PlanForm({ init, pid, meds, reloadMeds, notify, onClose, onSaved }: { i
             </div>
           )}
           {f.ruleKind === 'interval' && (
-            <input type="number" min={2} max={365} aria-label="ทุกกี่วัน" className={`${inputCls} mt-2`} value={f.interval} onChange={set('interval')} placeholder="เช่น 2" />
+            <input type="number" min={2} max={365} aria-label="ทุกกี่วัน" className={`${inputCls} mt-2`} value={f.interval} onChange={set('interval')} placeholder="ทานทุกกี่วัน เช่น 2 = เว้น 1 วัน" />
           )}
         </div>
         <div>
