@@ -160,7 +160,9 @@ begin
     raise exception 'ไม่พบเวอร์ชันความยินยอม' using errcode = '22023';
   end if;
 
+  -- gender follows the title the app put in front of the name ("นาย ธนพล"); a name without a known title keeps the old value
   update patients set nickname = nick, full_name = fname, age = p_age,
+         gender = case when fname ~ '^(นาย|เด็กชาย) ' then 'ชาย' when fname ~ '^(นางสาว|นาง|เด็กหญิง) ' then 'หญิง' else gender end,
          conditions = array_to_string(conds, ', '), profile_completed_at = now_ts
     where id = pid;
   update profiles set full_name = fname where id = uid;
@@ -937,3 +939,34 @@ create policy appt_d on appointments for delete to authenticated using (has_role
 -- 26) The doctor who looks after a patient is a typed name (patients.doctor_name), not a doctors row. The web has one ผู้ดูแลภาพรวม
 --     account, so naming the doctor no longer needs a user per doctor. Edited with the other patient columns (patients_u_doctor / patients_w).
 alter table patients add column if not exists doctor_name text check (char_length(doctor_name) <= 100);
+
+-- 27) Test notifications for the Admin "ทดสอบแจ้งเตือน" page. Sends a clearly marked test message to every active patient and caregiver
+--     account, as a notifications row (the app shows any such row as a system notification). Three kinds copy the three real
+--     reminders: before the dose, at dose time, and a dose not taken. Admin only; one audit row per send.
+create or replace function send_test_notification(p_kind text) returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  v_title text;
+  v_body text;
+  n integer;
+begin
+  if auth.uid() is null or not is_active_user() or not has_role('admin') then
+    raise exception 'ไม่มีสิทธิ์ส่งการแจ้งเตือนทดสอบ' using errcode = '42501';
+  end if;
+  if p_kind = 'before' then v_title := '[ทดสอบ] ใกล้ถึงเวลาทานยา'; v_body := 'อีก 15 นาทีถึงเวลาทานยา เตรียมยาและน้ำดื่มให้พร้อม';
+  elsif p_kind = 'now' then v_title := '[ทดสอบ] ถึงเวลาทานยาแล้ว'; v_body := 'ถึงเวลาทานยาแล้ว กดบันทึกในแอปหลังทานยาเสร็จ';
+  elsif p_kind = 'missed' then v_title := '[ทดสอบ] ยังไม่ได้ทานยา'; v_body := 'เลยเวลาทานยามาแล้ว หากยังไม่ได้ทาน กรุณาทานหรือบันทึกในแอป';
+  else raise exception 'ชนิดการแจ้งเตือนไม่ถูกต้อง' using errcode = '22023';
+  end if;
+  insert into notifications (user_id, type, title, body)
+    select p.id, 'admin_message', v_title, v_body
+    from profiles p
+    where p.is_active and exists (select 1 from user_roles r where r.user_id = p.id and r.role in ('patient', 'caregiver'));
+  get diagnostics n = row_count;
+  insert into audit_logs (actor, action, table_name, new_value)
+    values (auth.uid(), 'send_test_notification', 'notifications', jsonb_build_object('kind', p_kind, 'recipients', n));
+  return n;
+end
+$$;
+revoke execute on function send_test_notification(text) from public, anon;
+grant execute on function send_test_notification(text) to authenticated;

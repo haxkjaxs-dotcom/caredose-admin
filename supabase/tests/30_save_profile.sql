@@ -183,6 +183,29 @@ begin
   assert (select user_id from patients where id = '62000000-0000-0000-0000-000000000002') = '52000000-0000-0000-0000-000000000002', 'S2: user_id';
 end $$;
 
+-- ===== gender follows the title in the saved name (S2's patient row) =====
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"52000000-0000-0000-0000-000000000002"}', true);
+do $$
+declare
+  g text;
+  c record;
+begin
+  -- no known title (or no space after it): the value stays as it was; the row starts with no gender
+  perform save_my_profile('บี', 'นายก ใจดี', 41, '{หัวใจ}', '2026-11');
+  select gender into g from patients where id = '62000000-0000-0000-0000-000000000002';
+  assert g is null, 'gender: "นายก" without a title space changed it to ' || coalesce(g, 'null');
+  for c in select * from (values ('นาย ก', 'ชาย'), ('เด็กชาย ก', 'ชาย'), ('นางสาว ก', 'หญิง'), ('นาง ก', 'หญิง'), ('เด็กหญิง ก', 'หญิง')) t(n, expect) loop
+    perform save_my_profile('บี', c.n, 41, '{หัวใจ}', '2026-11');
+    select gender into g from patients where id = '62000000-0000-0000-0000-000000000002';
+    assert g = c.expect, 'gender: ' || c.n || ' gave ' || coalesce(g, 'null');
+  end loop;
+  perform save_my_profile('บี', 'สมหญิง', 41, '{หัวใจ}', '2026-11'); -- no title: keeps the last value
+  select gender into g from patients where id = '62000000-0000-0000-0000-000000000002';
+  assert g = 'หญิง', 'gender: untitled name reset it';
+end $$;
+reset role;
+
 -- ===== no patient row (S3): 42501, nothing written =====
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"53000000-0000-0000-0000-000000000003"}', true);

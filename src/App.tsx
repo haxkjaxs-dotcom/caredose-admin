@@ -13,6 +13,7 @@ import { Meds } from './pages/Meds'
 import { Doctors } from './pages/Doctors'
 import { Carers } from './pages/Carers'
 import { Users } from './pages/Users'
+import { TestNotice } from './pages/TestNotice'
 import { Login } from './pages/Login'
 import { defaultPageFor, navIdsFor, roleFromRoles } from './lib/roles'
 
@@ -27,6 +28,7 @@ const NAV: Nav[] = [
   { id: 'doctors', label: 'ผู้ดูแลภาพรวม' },
   { id: 'carers', label: 'ญาติและผู้ดูแล' },
   { id: 'users', label: 'ผู้ใช้และสิทธิ์' }, // Doctor sees it too, but may only edit caregiver / patient accounts
+  { id: 'testnotice', label: 'ทดสอบแจ้งเตือน', admin: true },
 ]
 
 const signOut = () => supabase.auth.signOut()
@@ -133,6 +135,7 @@ function Shell({ role, name }: { role: Role; name: string }) {
           {cur === 'doctors' && <Doctors {...ctx} />}
           {cur === 'carers' && <Carers {...ctx} />}
           {cur === 'users' && <Users role={role} />}
+          {cur === 'testnotice' && <TestNotice {...ctx} />}
         </div>
       </main>
       {toast && <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-brand-900 px-5 py-3 text-white shadow-lg">{toast}</div>}
