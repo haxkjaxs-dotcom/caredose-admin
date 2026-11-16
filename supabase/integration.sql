@@ -890,3 +890,46 @@ end
 $$;
 revoke execute on function delete_patient(uuid) from public, anon;
 grant execute on function delete_patient(uuid) to authenticated;
+
+-- 24) A new or changed appointment reaches the patient's app. Before, the Appointments page only wrote the appointments row, so the
+--     app got nothing. This writes a notifications row (type admin_message, the type the app already shows; the app listens to the
+--     notifications table through Realtime, see 8). Notified: new appointment, cancelled, postponed, new time or place.
+--     Not notified: the patient's own change (they are the one who just did it), a patient with no linked login, done / pending flips.
+--     Only staff (admin / doctor) or the server cause a notice: it is an admin_message, and a relative who manages the plan (appt_i)
+--     could otherwise push any text (place / reason) to the patient as a hospital message. Body capped at 500 like send_notification.
+create or replace function notify_appointment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_user uuid;
+  v_title text;
+begin
+  select user_id into v_user from patients where id = new.patient_id;
+  if v_user is null or v_user is not distinct from auth.uid() then return new; end if;
+  if auth.uid() is not null and not (has_role('admin') or has_role('doctor')) then return new; end if;
+  if tg_op = 'INSERT' then v_title := 'นัดหมายใหม่';
+  elsif new.status = 'cancelled' and old.status <> 'cancelled' then v_title := 'ยกเลิกนัดหมาย';
+  elsif new.status = 'postponed' and old.status <> 'postponed' then v_title := 'เลื่อนนัดหมาย';
+  elsif new.appointment_at is distinct from old.appointment_at or new.place is distinct from old.place then v_title := 'เปลี่ยนแปลงนัดหมาย';
+  else return new;
+  end if;
+  insert into notifications (user_id, type, title, body, patient_id)
+    values (v_user, 'admin_message', v_title,
+            left(to_char(new.appointment_at at time zone 'Asia/Bangkok', 'DD/MM/YYYY HH24:MI') || ' น.'
+              || coalesce(' ที่ ' || nullif(trim(new.place), ''), '') || coalesce(' (' || nullif(trim(new.reason), '') || ')', ''), 500),
+            new.patient_id);
+  return new;
+end
+$$;
+revoke execute on function notify_appointment() from public, anon, authenticated;
+drop trigger if exists appointments_notify on appointments;
+create trigger appointments_notify after insert or update on appointments for each row execute function notify_appointment();
+
+-- 25) Only Admin deletes an appointment. appt_w was FOR ALL on can_manage_plan, so a doctor (and a relative who manages the plan)
+--     could delete too. Split it: insert and update stay as they were, delete is Admin only.
+drop policy if exists appt_w on appointments;
+drop policy if exists appt_i on appointments;
+drop policy if exists appt_u on appointments;
+drop policy if exists appt_d on appointments;
+create policy appt_i on appointments for insert to authenticated with check (can_manage_plan(patient_id));
+create policy appt_u on appointments for update to authenticated using (can_manage_plan(patient_id)) with check (can_manage_plan(patient_id));
+create policy appt_d on appointments for delete to authenticated using (has_role('admin') and is_active_user());

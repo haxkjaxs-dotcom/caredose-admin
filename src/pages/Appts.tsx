@@ -11,7 +11,7 @@ type Row = { id: string; patient_id: string; appointment_at: string; place: stri
 type Opt = { id: string; full_name: string }
 const blank = { doctor: '', at: '', place: '', reason: '' }
 
-export function Appts({ notify, openPatient }: Ctx) {
+export function Appts({ notify, openPatient, role }: Ctx) {
   const [rows, setRows] = useState<Row[]>([])
   const [pats, setPats] = useState<Opt[]>([])
   const [docs, setDocs] = useState<Opt[]>([])
@@ -44,6 +44,16 @@ export function Appts({ notify, openPatient }: Ctx) {
     if (error) return notify('อัปเดตไม่สำเร็จ: ' + error.message)
     if (!data?.length) return notify('อัปเดตไม่สำเร็จ: ไม่มีสิทธิ์')
     notify(`อัปเดตสถานะเป็น "${LABEL[status]}"`)
+    load()
+  }
+
+  // select() so a delete that RLS silently filtered out (0 rows) is reported, not shown as success
+  const remove = async (a: Row) => {
+    if (!window.confirm(`ลบนัดหมายของ "${a.patients?.full_name ?? '-'}" ถาวร? กู้คืนไม่ได้`)) return
+    const { data, error } = await supabase.from('appointments').delete().eq('id', a.id).select('id')
+    if (error) return notify('ลบนัดหมายไม่สำเร็จ: ' + error.message)
+    if (!data?.length) return notify('ลบนัดหมายไม่สำเร็จ: ไม่มีสิทธิ์')
+    notify('ลบนัดหมายแล้ว')
     load()
   }
 
@@ -81,6 +91,7 @@ export function Appts({ notify, openPatient }: Ctx) {
               {a.status !== 'pending' && <Btn kind="ghost" onClick={() => set(a.id, 'pending')}>กลับเป็นรอนัด</Btn>}
               {a.status !== 'postponed' && <Btn kind="ghost" onClick={() => set(a.id, 'postponed')}>เลื่อน</Btn>}
               {a.status !== 'cancelled' && <Btn kind="danger" onClick={() => set(a.id, 'cancelled')}>ยกเลิก</Btn>}
+              {role === 'Admin' && <Btn kind="danger" onClick={() => remove(a)}>ลบ</Btn>}{/* cosmetic: appt_d decides */}
             </div>,
           ])}
         />
