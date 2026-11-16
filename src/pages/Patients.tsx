@@ -1,5 +1,4 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../supabase'
 import type { Tone } from '../data'
 import { Badge, Btn, Card, Field, H, Modal, Search, Select, Stat, Table, TitleSelect, fmt, inputCls, tones, withTitle } from '../ui'
@@ -45,7 +44,7 @@ const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, ph
 // the doctor's name is typed on the patient (doctor_name); the web has one ผู้ดูแลภาพรวม account, so no per-doctor user is needed. Older links still show.
 const doctorNames = (p: PatientRow) => p.doctor_name?.trim() || p.patient_doctors.filter((x) => x.active).map((x) => x.doctors?.full_name).filter(Boolean).join(', ') || '-'
 const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
-const blank = { title: '', doctor: '', full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '', pin: '' }
+const blank = { title: '', doctor: '', full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '' }
 
 export function Patients({ openPatient, notify, role }: Ctx) {
   const readOnly = role === 'Caregiver' // cosmetic: the database decides; detail page uses mock data so relatives get no "เปิด"
@@ -89,7 +88,6 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     if (!f.full_name.trim()) return setErr('กรุณาระบุชื่อ-นามสกุล')
     if (age !== null && (!Number.isInteger(age) || age < 0 || age > 130)) return setErr('อายุต้องเป็นจำนวนเต็ม 0-130')
     if (!isThaiMobile(f.phone)) return setErr('กรุณากรอกเบอร์มือถือ 10 หลัก (ใช้เบอร์นี้ให้ผู้ป่วยเข้าแอป)')
-    if (!/^\d{6}$/.test(f.pin)) return setErr('กรุณากำหนด PIN 6 หลักให้ผู้ป่วยเข้าสู่ระบบ')
     const phone = normalizePhoneDigits(f.phone)
     // a patient made from the Users page already has a row with this phone: block a second one (the login would clash anyway)
     const same = rows.find((p) => normalizePhoneDigits(p.phone ?? '') === phone)
@@ -104,20 +102,11 @@ export function Patients({ openPatient, notify, role }: Ctx) {
       return setErr('บันทึกไม่สำเร็จ: ' + error.message)
     }
     if (f.doctor.trim()) await supabase.from('patients').update({ doctor_name: f.doctor.trim() }).eq('id', pid) // best effort: the patient is saved either way, the name can be set from แก้ไข
-    // also creates the patient login (phone + PIN) and links it (create-user accepts Admin and doctor for role patient)
-    {
-      const acc = await supabase.functions.invoke('create-user', { body: { username: phone, full_name: withTitle(f.title, f.full_name), pin: f.pin, role: 'patient', patient_id: pid } })
-      if (acc.error) {
-        const body = acc.error instanceof FunctionsHttpError ? await acc.error.context.json().catch(() => null) : null
-        setBusy(false)
-        load()
-        return setErr('เพิ่มผู้ป่วยแล้ว แต่สร้างบัญชีไม่สำเร็จ: ' + (body?.error ?? acc.error.message))
-      }
-    }
+    // No login is made here: the patient signs in to the app with phone OTP, and claim_my_patient links that account to this row by phone.
     setBusy(false)
     setForm(false)
     setF(blank)
-    notify('เพิ่มผู้ป่วยและสร้างบัญชีแล้ว')
+    notify('เพิ่มผู้ป่วยแล้ว ผู้ป่วยเข้าแอปด้วยเบอร์นี้และยืนยัน OTP')
     load()
   }
 
@@ -215,11 +204,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
             <Field label="โรคประจำตัว"><input className={inputCls} value={f.conditions} onChange={(e) => setF({ ...f, conditions: e.target.value })} /></Field>
             <Field label="แพทย์ที่ดูแล"><input className={inputCls} maxLength={100} placeholder="เช่น นพ.สมชาย วงศ์สกุล" value={f.doctor} onChange={(e) => setF({ ...f, doctor: e.target.value })} /></Field>
             <Field label="ประวัติแพ้ยา"><input className={inputCls} value={f.drug_allergies} onChange={(e) => setF({ ...f, drug_allergies: e.target.value })} /></Field>
-            {(
-              <Field label="PIN 6 หลัก (สร้างบัญชีให้ผู้ป่วย ใช้เบอร์โทรเป็นชื่อผู้ใช้) *">
-                <input className={inputCls} inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} />
-              </Field>
-            )}
+            <p className="text-sm text-slate-500">ผู้ป่วยเข้าแอปด้วยเบอร์โทรนี้และยืนยันตัวตนด้วย OTP ไม่ต้องตั้ง PIN</p>
             {err && <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{err}</div>}
             <div className="flex justify-end"><Btn>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</Btn></div>
           </form>
