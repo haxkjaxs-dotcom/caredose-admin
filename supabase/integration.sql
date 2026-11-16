@@ -47,6 +47,7 @@ declare
   pid uuid;
   ids uuid[];
   pname text;
+  old_uid uuid;
 begin
   if uid is null then
     raise exception 'ต้องเข้าสู่ระบบก่อน' using errcode = '42501';
@@ -73,7 +74,15 @@ begin
   end if;
 
   select array_agg(id) into ids from (
-    select id from patients where user_id is null and norm_phone(phone) = np for update
+    -- free rows, plus rows held by an Admin-made login (<phone>@caredose.local, no phone of its own, patient role only):
+    -- the app signs in by phone OTP, so that login is dead weight and the phone's owner takes the row over.
+    select id from patients
+     where norm_phone(phone) = np
+       and (user_id is null
+            or exists (select 1 from auth.users o
+                        where o.id = patients.user_id and coalesce(o.phone, '') = '' and o.email like '%@caredose.local'
+                          and not exists (select 1 from user_roles r where r.user_id = o.id and r.role <> 'patient')))
+       for update
   ) s;
   if ids is null then
     return null;
@@ -83,12 +92,24 @@ begin
   end if;
   pid := ids[1];
 
-  update patients set user_id = uid where id = pid and user_id is null returning full_name into pname;
+  select user_id into old_uid from patients where id = pid;
+  update patients set user_id = uid where id = pid and user_id is not distinct from old_uid returning full_name into pname;
+  -- one person, one account: the Admin-made login goes (profiles/roles cascade, other references go null; the row is already re-pointed above),
+  -- and the phone account gets the patient's name so the auth user list shows it.
+  -- consents (the PDPA record) and the inbox cascade with the login, so they move to the phone account first
+  if old_uid is not null then
+    update consents set user_id = uid where user_id = old_uid;
+    update consents set given_by = uid where given_by = old_uid;
+    update notifications set user_id = uid where user_id = old_uid;
+    delete from auth.users where id = old_uid;
+  end if;
+  update auth.users set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) || jsonb_build_object('full_name', pname, 'display_name', pname)
+   where id = uid;
   insert into user_roles (user_id, role) values (uid, 'patient') on conflict do nothing;
   insert into profiles (id, phone, full_name, is_active) values (uid, np, pname, true)
     on conflict (id) do update set is_active = true, phone = excluded.phone, full_name = excluded.full_name;
   insert into audit_logs (actor, action, table_name, row_id, new_value)
-    values (uid, 'claim_patient', 'patients', pid::text, jsonb_build_object('user_id', uid, 'phone', np));
+    values (uid, 'claim_patient', 'patients', pid::text, jsonb_build_object('user_id', uid, 'phone', np, 'replaced_user_id', old_uid));
   return pid;
 end
 $$;

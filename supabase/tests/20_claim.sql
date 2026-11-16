@@ -316,4 +316,53 @@ begin
   assert (select user_id from patients where id = 'b2000000-0000-0000-0000-000000000002') = 'a2000000-0000-0000-0000-000000000002', 'guard: user_id changed';
 end $$;
 
+-- ===== row held by an Admin-made <phone>@caredose.local login (no phone): the phone's owner takes it over =====
+-- T1 = old Admin-made login (patient role, active). T2 = phone OTP account of the same number. T3 = email login with a role besides patient.
+reset role;
+insert into auth.users (id, email, phone, phone_confirmed_at) values
+  ('c1000000-0000-0000-0000-000000000001', '0899990001@caredose.local', null, null),
+  ('c2000000-0000-0000-0000-000000000002', null, '66899990001', now()),
+  ('c3000000-0000-0000-0000-000000000003', '0899990003@caredose.local', null, null),
+  ('c4000000-0000-0000-0000-000000000004', null, '66899990003', now());
+insert into user_roles (user_id, role) values
+  ('c1000000-0000-0000-0000-000000000001', 'patient'),
+  ('c3000000-0000-0000-0000-000000000003', 'patient'),
+  ('c3000000-0000-0000-0000-000000000003', 'caregiver');
+update profiles set is_active = true where id in ('c1000000-0000-0000-0000-000000000001', 'c3000000-0000-0000-0000-000000000003');
+insert into patients (id, user_id, full_name, phone) values
+  ('c1000000-0000-0000-0000-0000000000b1', 'c1000000-0000-0000-0000-000000000001', 'Takeover patient', '0899990001'),
+  ('c3000000-0000-0000-0000-0000000000b3', 'c3000000-0000-0000-0000-000000000003', 'Privileged owner patient', '0899990003');
+-- the old login's consent (PDPA record) and inbox must survive the takeover
+insert into consents (user_id, version, given_by) values ('c1000000-0000-0000-0000-000000000001', 'v1', 'c1000000-0000-0000-0000-000000000001');
+insert into notifications (user_id, type, title) values ('c1000000-0000-0000-0000-000000000001', 'admin_message', 'hello');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"c2000000-0000-0000-0000-000000000002"}', true);
+do $$
+begin
+  assert claim_my_patient() = 'c1000000-0000-0000-0000-0000000000b1', 'takeover: not claimed';
+end $$;
+-- an owner that also holds another role is never displaced
+select set_config('request.jwt.claims', '{"sub":"c4000000-0000-0000-0000-000000000004"}', true);
+do $$
+begin
+  assert claim_my_patient() is null, 'takeover: displaced an owner with another role';
+end $$;
+reset role;
+do $$
+begin
+  assert (select user_id from patients where id = 'c1000000-0000-0000-0000-0000000000b1') = 'c2000000-0000-0000-0000-000000000002', 'takeover: user_id';
+  assert exists (select 1 from user_roles where user_id = 'c2000000-0000-0000-0000-000000000002' and role = 'patient'), 'takeover: new role';
+  assert (select is_active from profiles where id = 'c2000000-0000-0000-0000-000000000002'), 'takeover: new profile inactive';
+  assert not exists (select 1 from auth.users where id = 'c1000000-0000-0000-0000-000000000001'), 'takeover: old login kept';
+  assert not exists (select 1 from profiles where id = 'c1000000-0000-0000-0000-000000000001'), 'takeover: old profile kept';
+  assert not exists (select 1 from user_roles where user_id = 'c1000000-0000-0000-0000-000000000001'), 'takeover: old role kept';
+  assert (select raw_user_meta_data->>'full_name' from auth.users where id = 'c2000000-0000-0000-0000-000000000002') = 'Takeover patient', 'takeover: name not set';
+  assert (select user_id from patients where id = 'c3000000-0000-0000-0000-0000000000b3') = 'c3000000-0000-0000-0000-000000000003', 'takeover: privileged owner displaced';
+  assert (select count(*) from consents where version = 'v1' and user_id = 'c2000000-0000-0000-0000-000000000002'
+            and given_by = 'c2000000-0000-0000-0000-000000000002') = 1, 'takeover: consent record lost';
+  assert (select count(*) from notifications where title = 'hello' and user_id = 'c2000000-0000-0000-0000-000000000002') = 1, 'takeover: inbox lost';
+  assert (select new_value->>'replaced_user_id' from audit_logs where action = 'claim_patient' and row_id = 'c1000000-0000-0000-0000-0000000000b1')
+         = 'c1000000-0000-0000-0000-000000000001', 'takeover: audit does not name the replaced login';
+end $$;
+
 rollback;
