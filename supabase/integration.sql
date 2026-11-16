@@ -933,3 +933,7 @@ drop policy if exists appt_d on appointments;
 create policy appt_i on appointments for insert to authenticated with check (can_manage_plan(patient_id));
 create policy appt_u on appointments for update to authenticated using (can_manage_plan(patient_id)) with check (can_manage_plan(patient_id));
 create policy appt_d on appointments for delete to authenticated using (has_role('admin') and is_active_user());
+
+-- 26) The doctor who looks after a patient is a typed name (patients.doctor_name), not a doctors row. The web has one ผู้ดูแลภาพรวม
+--     account, so naming the doctor no longer needs a user per doctor. Edited with the other patient columns (patients_u_doctor / patients_w).
+alter table patients add column if not exists doctor_name text check (char_length(doctor_name) <= 100);
