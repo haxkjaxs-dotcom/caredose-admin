@@ -38,9 +38,9 @@ const toDoseItem = (r: LogRow, i: number): DoseItem => {
 type PatientRow = {
   id: string; full_name: string; age: number | null; gender: string | null; conditions: string | null
   drug_allergies: string | null; phone: string | null; user_id: string | null; nickname: string | null
-  patient_doctors: { active: boolean; doctors: { full_name: string } | null }[]
+  patient_doctors: { active: boolean; doctor_id: string; doctors: { full_name: string } | null }[]
 }
-const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, phone, user_id, nickname, patient_doctors(active, doctors(full_name))'
+const PATIENT_COLS = 'id, full_name, age, gender, conditions, drug_allergies, phone, user_id, nickname, patient_doctors(active, doctor_id, doctors(full_name))'
 const doctorNames = (p: PatientRow) => p.patient_doctors.filter((x) => x.active).map((x) => x.doctors?.full_name).filter(Boolean).join(', ') || '-'
 const DUP_PHONE = 'เบอร์ซ้ำกับผู้ป่วยคนอื่น ผู้ป่วยจะเข้าแอปไม่ได้จนกว่าจะแก้เบอร์'
 const blank = { title: '', full_name: '', age: '', gender: 'หญิง', conditions: '', drug_allergies: '', phone: '', pin: '' }
@@ -55,6 +55,10 @@ export function Patients({ openPatient, notify, role }: Ctx) {
   const [f, setF] = useState(blank)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [edit, setEdit] = useState<PatientRow | null>(null) // the patient whose name / doctor is being edited
+  const [ef, setEf] = useState({ name: '', doctor: '' })
+  const [eerr, setEerr] = useState('')
+  const [docs, setDocs] = useState<{ id: string; full_name: string }[]>([])
 
   // RLS decides the list: a doctor gets only the patients assigned to them, Admin gets all.
   const load = async (quiet = false) => {
@@ -70,6 +74,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
   // Patients fill in their own profile (conditions, age) from the app: refresh so Admin sees it without reloading.
   // shortcut: polling every 15 s, switch to Realtime on patients if this list gets large.
   useEffect(() => {
+    supabase.from('doctors').select('id, full_name').eq('is_active', true).order('full_name').then(({ data }) => setDocs(data ?? []))
     load()
     const refresh = () => { if (!document.hidden) load(true) }
     const t = setInterval(refresh, 15000)
@@ -115,14 +120,32 @@ export function Patients({ openPatient, notify, role }: Ctx) {
     load()
   }
 
-  // the DB trigger (integration.sql 20) carries the new name to the linked account, so the Users page shows it too
-  const rename = async (p: PatientRow) => {
-    const name = window.prompt('ชื่อ-นามสกุลใหม่', p.full_name)?.trim()
-    if (!name || name === p.full_name) return
-    const { data, error } = await supabase.from('patients').update({ full_name: name }).eq('id', p.id).select('id')
-    if (error) return notify('แก้ชื่อไม่สำเร็จ: ' + error.message)
-    if (!data?.length) return notify('แก้ชื่อไม่สำเร็จ: ไม่มีสิทธิ์')
-    notify('แก้ชื่อแล้ว')
+  const curDoctor = (p: PatientRow) => p.patient_doctors.find((x) => x.active)?.doctor_id ?? ''
+  const openEdit = (p: PatientRow) => { setEerr(''); setEf({ name: p.full_name, doctor: curDoctor(p) }); setEdit(p) }
+  // the DB trigger (integration.sql 20) carries a new name to the linked account, so the Users page shows it too.
+  // Changing the doctor is Admin only (pd_w): it adds the chosen doctor as primary and drops the other links.
+  const saveEdit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy || !edit) return
+    const name = ef.name.trim()
+    if (!name) return setEerr('กรุณาระบุชื่อ-นามสกุล')
+    setBusy(true)
+    setEerr('')
+    if (name !== edit.full_name) {
+      const { data, error } = await supabase.from('patients').update({ full_name: name }).eq('id', edit.id).select('id')
+      if (error || !data?.length) { setBusy(false); return setEerr('แก้ชื่อไม่สำเร็จ: ' + (error?.message ?? 'ไม่มีสิทธิ์')) }
+    }
+    if (role === 'Admin' && ef.doctor !== curDoctor(edit)) {
+      if (ef.doctor) {
+        const up = await supabase.from('patient_doctors').upsert({ patient_id: edit.id, doctor_id: ef.doctor, is_primary: true, active: true }, { onConflict: 'patient_id,doctor_id' })
+        if (up.error) { setBusy(false); load(); return setEerr('บันทึกชื่อแล้ว แต่เปลี่ยนผู้ดูแลภาพรวมไม่สำเร็จ: ' + up.error.message) }
+      }
+      const del = await supabase.from('patient_doctors').delete().eq('patient_id', edit.id).neq('doctor_id', ef.doctor || '00000000-0000-0000-0000-000000000000')
+      if (del.error) { setBusy(false); load(); return setEerr('เปลี่ยนผู้ดูแลภาพรวมไม่ครบ: ' + del.error.message) }
+    }
+    setBusy(false)
+    setEdit(null)
+    notify('บันทึกแล้ว')
     load()
   }
 
@@ -163,13 +186,31 @@ export function Patients({ openPatient, notify, role }: Ctx) {
             readOnly ? '' : (
               <div className="flex gap-2">
                 <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>
-                <Btn kind="ghost" onClick={() => rename(p)}>แก้ชื่อ</Btn>
+                <Btn kind="ghost" onClick={() => openEdit(p)}>แก้ไข</Btn>
                 {role === 'Admin' && <Btn kind="danger" onClick={() => remove(p)}>ลบ</Btn>}{/* cosmetic: patients_w decides */}
               </div>
             ),
           ])}
         />
       </Card>
+      {edit && (
+        <Modal title="แก้ไขข้อมูลผู้ป่วย" onClose={() => setEdit(null)}>
+          <form onSubmit={saveEdit} className="space-y-4">
+            <Field label="ชื่อ-นามสกุล *"><input className={inputCls} autoFocus value={ef.name} onChange={(e) => setEf({ ...ef, name: e.target.value })} /></Field>
+            <Field label="ผู้ดูแลภาพรวมที่ดูแล">
+              {role === 'Admin' ? (
+                <select className={inputCls} value={ef.doctor} onChange={(e) => setEf({ ...ef, doctor: e.target.value })}>
+                  <option value="">- ไม่ระบุ -</option>
+                  {docs.map((d) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
+                </select>
+              ) : <div className="min-h-11 rounded-xl bg-slate-50 px-3 py-2.5 text-slate-700">{doctorNames(edit)} <span className="text-sm text-slate-400">(เปลี่ยนได้เฉพาะ Admin)</span></div>}
+            </Field>
+            {edit.user_id && <p className="text-sm text-slate-500">ชื่อใหม่จะเปลี่ยนในหน้าผู้ใช้และสิทธิ์ด้วย</p>}
+            {eerr && <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{eerr}</div>}
+            <div className="flex justify-end gap-2"><Btn kind="ghost" onClick={() => setEdit(null)}>ยกเลิก</Btn><Btn>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</Btn></div>
+          </form>
+        </Modal>
+      )}
       {form && (
         <Modal title="เพิ่มผู้ป่วย" onClose={() => setForm(false)}>
           <form onSubmit={add} className="space-y-4">
