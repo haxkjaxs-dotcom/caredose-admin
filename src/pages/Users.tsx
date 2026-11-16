@@ -24,6 +24,9 @@ export function Users({ role: myRole }: { role: Role }) {
   const titled = f.role === 'caregiver' || f.role === 'patient' // no title for Admin / ผู้ดูแลภาพรวม accounts
   const [formErr, setFormErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [renaming, setRenaming] = useState<U | null>(null)
+  const [newName, setNewName] = useState('')
+  const [nameErr, setNameErr] = useState('')
 
   const load = useCallback(async () => {
     const [p, r, a, pt] = await Promise.all([
@@ -85,12 +88,18 @@ export function Users({ role: myRole }: { role: Role }) {
   }
 
   // the DB trigger (integration.sql 20) carries the new name to the patients / caregivers / doctors row of this account
-  const rename = async (u: U) => {
-    const name = window.prompt('ชื่อ-นามสกุลใหม่', u.full_name ?? '')?.trim()
-    if (!name || name === u.full_name) return
-    const { data, error } = await supabase.from('profiles').update({ full_name: name }).eq('id', u.id).select('id')
-    if (error) return setMsg('แก้ชื่อไม่สำเร็จ: ' + error.message)
-    if (!data?.length) return setMsg('แก้ชื่อไม่สำเร็จ: ไม่มีสิทธิ์')
+  const saveName = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy || !renaming) return
+    const name = newName.trim()
+    if (!name) return setNameErr('กรุณาระบุชื่อ-นามสกุล')
+    if (name === renaming.full_name) return setRenaming(null)
+    setBusy(true)
+    setNameErr('')
+    const { data, error } = await supabase.from('profiles').update({ full_name: name }).eq('id', renaming.id).select('id')
+    setBusy(false)
+    if (error || !data?.length) return setNameErr('แก้ชื่อไม่สำเร็จ: ' + (error?.message ?? 'ไม่มีสิทธิ์'))
+    setRenaming(null)
     setMsg('แก้ชื่อแล้ว')
     load()
   }
@@ -142,7 +151,7 @@ export function Users({ role: myRole }: { role: Role }) {
             ...(staffTable && isAdmin ? [usage[u.id] ? `${usage[u.id].n} ครั้ง` : '-', usage[u.id] ? new Date(usage[u.id].last).toLocaleString('th-TH') : 'ยังไม่มีการใช้งาน'] : []),
             u.id === me ? <span className="text-sm text-slate-400">บัญชีของคุณ</span> : staffTable && !isAdmin ? <span className="text-sm text-slate-400">แก้ไขไม่ได้</span> : (
               <div className="flex gap-2">
-                <Btn kind="ghost" onClick={() => rename(u)}>แก้ชื่อ</Btn>
+                <Btn kind="ghost" onClick={() => { setNameErr(''); setNewName(u.full_name ?? ''); setRenaming(u) }}>แก้ชื่อ</Btn>
                 <Btn kind="ghost" onClick={() => toggle(u)}>{u.is_active ? 'ปิดบัญชี' : 'เปิดบัญชี'}</Btn>
                 {isAdmin && <Btn kind="danger" onClick={() => remove(u)}>ลบ</Btn>}
               </div>
@@ -166,6 +175,16 @@ export function Users({ role: myRole }: { role: Role }) {
         <H>Audit Log</H>
         <Table head={['เวลา', 'ผู้ดำเนินการ', 'การกระทำ', 'รายการ']} rows={audit.map((a) => [new Date(a.at).toLocaleString('th-TH'), nameOf(a.actor), a.action, `${a.table_name ?? ''} ${a.row_id ?? ''}`])} />
       </Card>}
+      {renaming && (
+        <Modal title="แก้ชื่อบัญชี" onClose={() => setRenaming(null)}>
+          <form onSubmit={saveName} className="space-y-4">
+            <Field label="ชื่อ-นามสกุล *"><input className={inputCls} autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} /></Field>
+            <p className="text-sm text-slate-500">{renaming.phone ? `เบอร์ ${renaming.phone} · ` : ''}ชื่อใหม่จะเปลี่ยนในหน้าผู้ป่วย หน้าญาติ/ผู้ดูแล และหน้าผู้ดูแลภาพรวมด้วย</p>
+            {nameErr && <div role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{nameErr}</div>}
+            <div className="flex justify-end gap-2"><Btn kind="ghost" onClick={() => setRenaming(null)}>ยกเลิก</Btn><Btn>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</Btn></div>
+          </form>
+        </Modal>
+      )}
       {form && (
         <Modal title="เพิ่มผู้ใช้" onClose={() => setForm(false)}>
           <form onSubmit={create} className="space-y-4">
