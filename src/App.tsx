@@ -17,18 +17,18 @@ import { TestNotice } from './pages/TestNotice'
 import { Login } from './pages/Login'
 import { defaultPageFor, navIdsFor, roleFromRoles } from './lib/roles'
 
-type Nav = { id: string; label: string; admin?: boolean }
+type Nav = { id: string; label: string; icon: string; admin?: boolean }
 const NAV: Nav[] = [
-  { id: 'dash', label: 'ภาพรวม' },
-  { id: 'patients', label: 'ผู้ป่วย' },
-  { id: 'plans', label: 'แผนยา' },
-  { id: 'logs', label: 'ประวัติการทานยา' },
-  { id: 'appts', label: 'นัดหมาย' },
-  { id: 'meds', label: 'คลังยา' },
-  { id: 'doctors', label: 'ผู้ดูแลภาพรวม' },
-  { id: 'carers', label: 'ญาติและผู้ดูแล' },
-  { id: 'users', label: 'ผู้ใช้และสิทธิ์' }, // Doctor sees it too, but may only edit caregiver / patient accounts
-  { id: 'testnotice', label: 'ทดสอบแจ้งเตือน', admin: true },
+  { id: 'dash', label: 'ภาพรวม', icon: '🏠' },
+  { id: 'patients', label: 'ผู้ป่วย', icon: '🧑‍⚕️' },
+  { id: 'plans', label: 'แผนยา', icon: '📋' },
+  { id: 'logs', label: 'ประวัติการทานยา', icon: '🕘' },
+  { id: 'appts', label: 'นัดหมาย', icon: '📅' },
+  { id: 'meds', label: 'คลังยา', icon: '💊' },
+  { id: 'doctors', label: 'ผู้ดูแลภาพรวม', icon: '🩺' },
+  { id: 'carers', label: 'ญาติและผู้ดูแล', icon: '👪' },
+  { id: 'users', label: 'ผู้ใช้และสิทธิ์', icon: '🔑' }, // Doctor sees it too, but may only edit caregiver / patient accounts
+  { id: 'testnotice', label: 'ทดสอบแจ้งเตือน', icon: '🔔', admin: true },
 ]
 
 const signOut = () => supabase.auth.signOut()
@@ -78,6 +78,8 @@ function Shell({ role, name }: { role: Role; name: string }) {
   const [detail, setDetail] = useState<string | null>(null)
   const [detailReturn, setDetailReturn] = useState('patients')
   const [open, setOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('navCollapsed') === '1' } catch { return false } })
+  const toggleNav = () => { setCollapsed(!collapsed); try { localStorage.setItem('navCollapsed', collapsed ? '0' : '1') } catch { /* private window */ } }
   const [plans, setPlans] = useState(D.plans)
   const [appts, setAppts] = useState(D.appts)
   const [followUps, setFollowUps] = useState<FollowUp[]>([])
@@ -101,27 +103,29 @@ function Shell({ role, name }: { role: Role; name: string }) {
 
   return (
     <div className="min-h-screen lg:flex">
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-brand-900 p-5 text-white transition lg:static lg:translate-x-0 ${open ? '' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-brand-900 p-5 text-white transition lg:static lg:translate-x-0 ${collapsed ? 'lg:w-20 lg:px-3' : ''} ${open ? '' : '-translate-x-full'}`}>
         <div className="mb-8">
-          <div className="text-2xl font-bold">ยาอุ่นใจ</div>
-          <div className="text-sm text-brand-100">CareDose · ระบบหลังบ้าน</div>
+          <div className="text-2xl font-bold">{collapsed ? <><span className="hidden lg:inline">💙</span><span className="lg:hidden">ยาอุ่นใจ</span></> : 'ยาอุ่นใจ'}</div>
+          <div className={`text-sm text-brand-100 ${collapsed ? 'lg:hidden' : ''}`}>CareDose · ระบบหลังบ้าน</div>
         </div>
         <nav className="space-y-1">
           {nav.map((n) => (
-            <button key={n.id} onClick={() => go(n.id)} className={`flex min-h-11 w-full items-center rounded-xl px-4 text-left text-base ${cur === n.id ? 'bg-white/15 font-semibold' : 'text-brand-100 hover:bg-white/10'}`}>
-              {n.label}
+            <button key={n.id} onClick={() => go(n.id)} title={n.label} className={`flex min-h-11 w-full items-center gap-3 rounded-full px-4 text-left text-base ${collapsed ? 'lg:justify-center lg:px-0' : ''} ${cur === n.id ? 'bg-white/15 font-semibold' : 'text-brand-100 hover:bg-white/10'}`}>
+              <span aria-hidden>{n.icon}</span>
+              <span className={collapsed ? 'lg:hidden' : ''}>{n.label}</span>
             </button>
           ))}
         </nav>
         <div className="absolute inset-x-5 bottom-5 rounded-xl bg-white/10 p-3 text-sm">
-          <div className="mb-2 text-brand-100">{roleLabel}</div>
-          <button onClick={signOut} className="min-h-11 w-full rounded-lg bg-white px-2 py-2 text-brand-900">ออกจากระบบ</button>
+          <div className={`mb-2 text-brand-100 ${collapsed ? 'lg:hidden' : ''}`}>{roleLabel}</div>
+          <button onClick={signOut} title="ออกจากระบบ" className="min-h-11 w-full rounded-full bg-white px-2 py-2 text-brand-900"><span className={collapsed ? 'lg:hidden' : ''}>ออกจากระบบ</span>{collapsed && <span className="hidden lg:inline" aria-label="ออกจากระบบ">⏻</span>}</button>
         </div>
       </aside>
       {open && <div className="fixed inset-0 z-30 bg-black/30 lg:hidden" onClick={() => setOpen(false)} />}
       <main className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:px-8">
-          <button className="min-h-11 rounded-xl border border-slate-300 px-4 lg:hidden" onClick={() => setOpen(true)}>เมนู</button>
+          <button className="min-h-11 rounded-full border-[1.5px] border-[#8dbff0] px-4 lg:hidden" onClick={() => setOpen(true)}>เมนู</button>
+          <button className="hidden min-h-11 rounded-full border-[1.5px] border-[#8dbff0] px-4 lg:block" aria-label={collapsed ? 'ขยายเมนู' : 'ย่อเมนู'} onClick={toggleNav}>{collapsed ? '☰ ขยายเมนู' : '◀ ย่อเมนู'}</button>
           <h1 className="text-xl font-bold">{nav.find((n) => n.id === cur)?.label}</h1>
           <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700">{name ? `${name} · ${roleLabel}` : roleLabel}</span>
         </header>

@@ -27,7 +27,7 @@ export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
   )
 }
 export const Card = ({ children, className = '' }: { children: ReactNode; className?: string }) => (
-  <section className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ${className}`}>{children}</section>
+  <section className={`rounded-3xl border border-brand-100 bg-white p-5 shadow-[0_2px_12px_rgba(31,120,209,0.08)] ${className}`}>{children}</section>
 )
 export const H = ({ children, action }: { children: ReactNode; action?: ReactNode }) => (
   <div className="mb-4 flex items-center justify-between gap-3">
@@ -40,14 +40,14 @@ export const Btn = ({ children, onClick, kind = 'primary', disabled }: { childre
     onClick={onClick}
     disabled={disabled}
     type={onClick ? 'button' : 'submit'} // a button with a handler must not submit the surrounding form
-    className={`min-h-11 rounded-xl px-4 text-base font-medium transition disabled:opacity-50 ${
-      kind === 'primary' ? 'bg-brand-600 text-white hover:bg-brand-700' : kind === 'danger' ? 'border border-red-300 text-red-700 hover:bg-red-50' : 'border border-slate-300 hover:bg-slate-50'
+    className={`min-h-11 rounded-full px-5 text-base font-semibold transition disabled:opacity-50 ${
+      kind === 'primary' ? 'bg-brand-600 text-white hover:bg-brand-700' : kind === 'danger' ? 'border border-red-300 text-red-700 hover:bg-red-50' : 'border-[1.5px] border-[#8dbff0] text-brand-600 hover:bg-brand-50'
     }`}
   >
     {children}
   </button>
 )
-export const inputCls = 'min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-base outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100'
+export const inputCls = 'min-h-11 w-full rounded-2xl border-[1.5px] border-[#b7d5f3] bg-white px-3 text-base outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100'
 export const Search = ({ v, set, ph = 'ค้นหา...' }: { v: string; set: (s: string) => void; ph?: string }) => (
   <input className={inputCls + ' sm:max-w-xs'} placeholder={ph} value={v} onChange={(e) => set(e.target.value)} />
 )
@@ -64,7 +64,7 @@ export function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] text-left text-base">
         <thead>
-          <tr className="border-b border-slate-200 text-sm text-slate-500">
+          <tr className="border-b border-brand-100 text-sm text-slate-500">
             {head.map((h) => (
               <th key={h} className="px-3 py-2 font-medium">{h}</th>
             ))}
@@ -72,7 +72,7 @@ export function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+            <tr key={i} className="border-b border-brand-50 last:border-0 hover:bg-brand-50">
               {r.map((c, j) => (
                 <td key={j} className="px-3 py-3 align-middle">{c}</td>
               ))}
@@ -115,7 +115,7 @@ export const TitleSelect = ({ v, set }: { v: string; set: (s: string) => void })
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-white p-6 sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-t-[28px] bg-white p-6 shadow-xl sm:rounded-[28px]" onClick={(e) => e.stopPropagation()}>
         <H action={<Btn kind="ghost" onClick={onClose}>ปิด</Btn>}>{title}</H>
         {children}
       </div>

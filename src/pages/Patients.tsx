@@ -218,8 +218,11 @@ export function PatientDetail({ id, back, followUps, setFollowUps, notify, role 
   const [p, setP] = useState<PatientRow | null | undefined>(undefined)
   const [plans, setPlans] = useState<PlanView[]>([])
   const [next, setNext] = useState<{ appointment_at: string; place: string | null; reason: string | null } | null>(null)
+  const [bmis, setBmis] = useState<{ weight_kg: number; height_cm: number; bmi_value: number; category: string; calculated_at: string }[]>([])
   const [sending, setSending] = useState(false)
   useEffect(() => {
+    supabase.from('bmi_logs').select('weight_kg, height_cm, bmi_value, category, calculated_at').eq('patient_id', id).order('calculated_at', { ascending: false }).limit(10)
+      .then(({ data }) => setBmis(data ?? []))
     supabase.from('patients').select(PATIENT_COLS).eq('id', id).maybeSingle().then(({ data, error }) => {
       if (error) notify('โหลดข้อมูลผู้ป่วยไม่สำเร็จ: ' + error.message)
       setP((data as unknown as PatientRow | null) ?? null)
@@ -261,6 +264,10 @@ export function PatientDetail({ id, back, followUps, setFollowUps, notify, role 
           {next ? <div><div className="font-semibold">{fmt(next.appointment_at)}</div><div className="text-slate-500">{next.place ?? '-'} · {next.reason ?? '-'}</div></div> : <div className="text-slate-400">ไม่มีนัดหมาย</div>}
         </Card>
       </div>
+      <Card>
+        <H>BMI ที่ผู้ป่วยคำนวณ</H>
+        <Table head={['วันที่', 'น้ำหนัก (กก.)', 'ส่วนสูง (ซม.)', 'BMI', 'ผล']} rows={bmis.map((b) => [fmt(b.calculated_at), String(b.weight_kg), String(b.height_cm), String(Number(b.bmi_value)), b.category])} />
+      </Card>
       <Card>
         <H>แผนยาปัจจุบัน</H>
         <Table head={['ยา', 'ขนาด', 'เวลา', 'คำแนะนำ', 'ช่วงเวลา']} rows={plans.map((r) => [r.name, r.dose, r.times.join(', ') || '-', r.meal || '-', r.range])} />
