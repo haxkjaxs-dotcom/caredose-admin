@@ -27,8 +27,8 @@ export function Login() {
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <div className="text-2xl font-bold text-brand-900">ยาอุ่นใจ</div>
-          <div className="text-sm text-slate-500">CareDose · เข้าสู่ระบบหลังบ้าน</div>
+          <div className="text-2xl font-bold text-brand-900">ห่วงใยทานยา CareTime</div>
+          <div className="text-sm text-slate-500">เข้าสู่ระบบหลังบ้าน</div>
         </div>
         <form onSubmit={submit} className="space-y-4">
           <Field label="เบอร์โทรศัพท์ หรือ ชื่อผู้ใช้">

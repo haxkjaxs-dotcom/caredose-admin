@@ -106,8 +106,8 @@ function Shell({ role, name }: { role: Role; name: string }) {
     <div className="min-h-screen lg:flex">
       <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-brand-900 p-5 text-white transition lg:static lg:translate-x-0 ${collapsed ? 'lg:w-20 lg:px-3' : ''} ${open ? '' : '-translate-x-full'}`}>
         <div className="mb-8">
-          <div className="text-2xl font-bold">{collapsed ? <><span className="hidden lg:inline">ย</span><span className="lg:hidden">ยาอุ่นใจ</span></> : 'ยาอุ่นใจ'}</div>
-          <div className={`text-sm text-brand-100 ${collapsed ? 'lg:hidden' : ''}`}>CareDose · ระบบหลังบ้าน</div>
+          <div className="text-xl font-bold leading-tight">{collapsed ? <><span className="hidden lg:inline">ห</span><span className="lg:hidden">ห่วงใยทานยา CareTime</span></> : 'ห่วงใยทานยา CareTime'}</div>
+          <div className={`text-sm text-brand-100 ${collapsed ? 'lg:hidden' : ''}`}>ระบบหลังบ้าน</div>
         </div>
         <nav className="space-y-1">
           {nav.map((n) => (
