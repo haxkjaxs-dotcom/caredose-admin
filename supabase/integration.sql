@@ -941,7 +941,8 @@ create policy appt_d on appointments for delete to authenticated using (has_role
 alter table patients add column if not exists doctor_name text check (char_length(doctor_name) <= 100);
 
 -- 27) Test notifications for the Admin "ทดสอบแจ้งเตือน" page. Sends a clearly marked test message to every active patient and caregiver
---     account, as a notifications row (the app shows any such row as a system notification). Three kinds copy the three real
+--     account, as a notifications row of type test_before / test_now / test_missed (the app shows any row as a system notification,
+--     and rings these three on the real reminder's channel so they sound the same). Three kinds copy the three real
 --     reminders: before the dose, at dose time, and a dose not taken. Admin only; one audit row per send.
 create or replace function send_test_notification(p_kind text) returns integer
 language plpgsql security definer set search_path = public as $$
@@ -959,7 +960,7 @@ begin
   else raise exception 'ชนิดการแจ้งเตือนไม่ถูกต้อง' using errcode = '22023';
   end if;
   insert into notifications (user_id, type, title, body)
-    select p.id, 'admin_message', v_title, v_body
+    select p.id, 'test_' || p_kind, v_title, v_body
     from profiles p
     where p.is_active and exists (select 1 from user_roles r where r.user_id = p.id and r.role in ('patient', 'caregiver'));
   get diagnostics n = row_count;
@@ -970,3 +971,31 @@ end
 $$;
 revoke execute on function send_test_notification(text) from public, anon;
 grant execute on function send_test_notification(text) to authenticated;
+
+-- 28) bmi_logs input checks and write rights. schema.sql accepted any value from any signed-in account that can see the patient.
+--     Now: sane number ranges and a short category (NOT VALID: rows saved earlier are not re-checked), no future date, at most 20 rows
+--     per patient per hour, and only the patient's own account may add a row (the app is the only writer; Admin and relatives do not).
+alter table bmi_logs drop constraint if exists bmi_logs_values_check;
+alter table bmi_logs add constraint bmi_logs_values_check check (
+  weight_kg between 1 and 500 and height_cm between 30 and 300 and bmi_value between 1 and 200 and char_length(category) <= 50) not valid;
+
+-- The limit counts by created_at, set here by the server: calculated_at comes from the app, so back-dating every row would dodge it.
+-- No default on the add, so rows saved before stay null and do not count against anyone's first hour after this runs.
+alter table bmi_logs add column if not exists created_at timestamptz;
+alter table bmi_logs alter column created_at set default now();
+
+create or replace function bmi_logs_guard() returns trigger language plpgsql as $$
+begin
+  new.created_at := now();
+  if new.calculated_at > now() + interval '1 day' then raise exception 'วันที่ไม่ถูกต้อง' using errcode = '22023'; end if;
+  if (select count(*) from bmi_logs where patient_id = new.patient_id and created_at > now() - interval '1 hour') >= 20 then
+    raise exception 'บันทึกบ่อยเกินไป' using errcode = '54000';
+  end if;
+  return new;
+end $$;
+drop trigger if exists bmi_logs_guard on bmi_logs;
+create trigger bmi_logs_guard before insert on bmi_logs for each row execute function bmi_logs_guard();
+
+drop policy if exists bmi_i on bmi_logs;
+create policy bmi_i on bmi_logs for insert to authenticated
+  with check (exists (select 1 from patients p where p.id = patient_id and p.user_id = auth.uid()) and is_active_user());

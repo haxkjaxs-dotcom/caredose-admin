@@ -26,6 +26,8 @@ do $$
 begin
   assert (select count(*) from notifications where title = '[ทดสอบ] ใกล้ถึงเวลาทานยา'
             and user_id in ('a3110000-0000-0000-0000-000000000003', 'a4110000-0000-0000-0000-000000000004')) = 2, 'recipients missing';
+  -- type test_<kind>: the app rings it on the real reminder's channel, with the real reminder's sound
+  assert not exists (select 1 from notifications where title like '[ทดสอบ]%' and type <> 'test_before'), 'type is not test_before';
   assert not exists (select 1 from notifications where user_id in ('a1110000-0000-0000-0000-000000000001', 'a2110000-0000-0000-0000-000000000002', 'a5110000-0000-0000-0000-000000000005')), 'staff or disabled account got one';
 end $$;
 rollback;
