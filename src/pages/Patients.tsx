@@ -163,7 +163,7 @@ export function Patients({ openPatient, notify, role }: Ctx) {
             <div><Badge tone={p.user_id ? 'green' : 'gray'}>{p.user_id ? 'เชื่อมแล้ว' : 'ยังไม่เชื่อม'}</Badge>{dupIds.has(p.id) && <div className="mt-1 text-xs text-amber-700">{DUP_PHONE}</div>}</div>,
             readOnly ? '' : (
               <div className="flex gap-2">
-                <Btn kind="ghost" onClick={() => openPatient(p.id)}>เปิด</Btn>
+                <Btn kind="ghost" onClick={() => openPatient(p.id)}>ประวัติ</Btn>
                 <Btn kind="ghost" onClick={() => openEdit(p)}>แก้ไข</Btn>
                 {role === 'Admin' && <Btn kind="danger" onClick={() => remove(p)}>ลบ</Btn>}{/* cosmetic: patients_w decides */}
               </div>

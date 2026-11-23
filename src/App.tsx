@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import { LayoutDashboard, Users as UsersIcon, ClipboardList, History, CalendarDays, Pill, Stethoscope, HeartHandshake, KeyRound, Bell, LogOut, type LucideIcon } from 'lucide-react'
 import { supabase } from './supabase'
 import * as D from './data'
 import type { Appt } from './data'
@@ -17,18 +18,18 @@ import { TestNotice } from './pages/TestNotice'
 import { Login } from './pages/Login'
 import { defaultPageFor, navIdsFor, roleFromRoles } from './lib/roles'
 
-type Nav = { id: string; label: string; icon: string; admin?: boolean }
+type Nav = { id: string; label: string; icon: LucideIcon; admin?: boolean }
 const NAV: Nav[] = [
-  { id: 'dash', label: 'ภาพรวม', icon: '🏠' },
-  { id: 'patients', label: 'ผู้ป่วย', icon: '🧑‍⚕️' },
-  { id: 'plans', label: 'แผนยา', icon: '📋' },
-  { id: 'logs', label: 'ประวัติการทานยา', icon: '🕘' },
-  { id: 'appts', label: 'นัดหมาย', icon: '📅' },
-  { id: 'meds', label: 'คลังยา', icon: '💊' },
-  { id: 'doctors', label: 'ผู้ดูแลภาพรวม', icon: '🩺' },
-  { id: 'carers', label: 'ญาติและผู้ดูแล', icon: '👪' },
-  { id: 'users', label: 'ผู้ใช้และสิทธิ์', icon: '🔑' }, // Doctor sees it too, but may only edit caregiver / patient accounts
-  { id: 'testnotice', label: 'ทดสอบแจ้งเตือน', icon: '🔔', admin: true },
+  { id: 'dash', label: 'ภาพรวม', icon: LayoutDashboard },
+  { id: 'patients', label: 'ผู้ป่วย', icon: UsersIcon },
+  { id: 'plans', label: 'แผนยา', icon: ClipboardList },
+  { id: 'logs', label: 'ประวัติการทานยา', icon: History },
+  { id: 'appts', label: 'นัดหมาย', icon: CalendarDays },
+  { id: 'meds', label: 'คลังยา', icon: Pill },
+  { id: 'doctors', label: 'ผู้ดูแลภาพรวม', icon: Stethoscope },
+  { id: 'carers', label: 'ญาติและผู้ดูแล', icon: HeartHandshake },
+  { id: 'users', label: 'ผู้ใช้และสิทธิ์', icon: KeyRound }, // Doctor sees it too, but may only edit caregiver / patient accounts
+  { id: 'testnotice', label: 'ทดสอบแจ้งเตือน', icon: Bell, admin: true },
 ]
 
 const signOut = () => supabase.auth.signOut()
@@ -105,27 +106,27 @@ function Shell({ role, name }: { role: Role; name: string }) {
     <div className="min-h-screen lg:flex">
       <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-brand-900 p-5 text-white transition lg:static lg:translate-x-0 ${collapsed ? 'lg:w-20 lg:px-3' : ''} ${open ? '' : '-translate-x-full'}`}>
         <div className="mb-8">
-          <div className="text-2xl font-bold">{collapsed ? <><span className="hidden lg:inline">💙</span><span className="lg:hidden">ยาอุ่นใจ</span></> : 'ยาอุ่นใจ'}</div>
+          <div className="text-2xl font-bold">{collapsed ? <><span className="hidden lg:inline">ย</span><span className="lg:hidden">ยาอุ่นใจ</span></> : 'ยาอุ่นใจ'}</div>
           <div className={`text-sm text-brand-100 ${collapsed ? 'lg:hidden' : ''}`}>CareDose · ระบบหลังบ้าน</div>
         </div>
         <nav className="space-y-1">
           {nav.map((n) => (
             <button key={n.id} onClick={() => go(n.id)} title={n.label} className={`flex min-h-11 w-full items-center gap-3 rounded-full px-4 text-left text-base ${collapsed ? 'lg:justify-center lg:px-0' : ''} ${cur === n.id ? 'bg-white/15 font-semibold' : 'text-brand-100 hover:bg-white/10'}`}>
-              <span aria-hidden>{n.icon}</span>
+              <n.icon className="size-5 shrink-0" aria-hidden />
               <span className={collapsed ? 'lg:hidden' : ''}>{n.label}</span>
             </button>
           ))}
         </nav>
         <div className="absolute inset-x-5 bottom-5 rounded-xl bg-white/10 p-3 text-sm">
           <div className={`mb-2 text-brand-100 ${collapsed ? 'lg:hidden' : ''}`}>{roleLabel}</div>
-          <button onClick={signOut} title="ออกจากระบบ" className="min-h-11 w-full rounded-full bg-white px-2 py-2 text-brand-900"><span className={collapsed ? 'lg:hidden' : ''}>ออกจากระบบ</span>{collapsed && <span className="hidden lg:inline" aria-label="ออกจากระบบ">⏻</span>}</button>
+          <button onClick={signOut} title="ออกจากระบบ" className="min-h-11 w-full rounded-full bg-white px-2 py-2 text-brand-900"><span className={collapsed ? 'lg:hidden' : ''}>ออกจากระบบ</span>{collapsed && <LogOut className="mx-auto hidden size-5 lg:block" aria-label="ออกจากระบบ" />}</button>
         </div>
       </aside>
       {open && <div className="fixed inset-0 z-30 bg-black/30 lg:hidden" onClick={() => setOpen(false)} />}
       <main className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:px-8">
           <button className="min-h-11 rounded-full border-[1.5px] border-[#8dbff0] px-4 lg:hidden" onClick={() => setOpen(true)}>เมนู</button>
-          <button className="hidden min-h-11 rounded-full border-[1.5px] border-[#8dbff0] px-4 lg:block" aria-label={collapsed ? 'ขยายเมนู' : 'ย่อเมนู'} onClick={toggleNav}>{collapsed ? '☰ ขยายเมนู' : '◀ ย่อเมนู'}</button>
+          <button className="hidden min-h-11 rounded-full border-[1.5px] border-[#8dbff0] px-4 lg:block" aria-label={collapsed ? 'ขยายเมนู' : 'ย่อเมนู'} onClick={toggleNav}>{collapsed ? 'ขยายเมนู' : 'ย่อเมนู'}</button>
           <h1 className="text-xl font-bold">{nav.find((n) => n.id === cur)?.label}</h1>
           <span className="ml-auto rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700">{name ? `${name} · ${roleLabel}` : roleLabel}</span>
         </header>
